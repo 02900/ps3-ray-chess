@@ -1,0 +1,3 @@
+[submodule ".claude/skills/ps3-homebrew"]
+	path = .claude/skills/ps3-homebrew
+	url = ../ps3-homebrew-skills.git

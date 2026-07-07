@@ -1,0 +1,32 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build RayChess PS3
+    runs-on: ubuntu-latest
+    # The RSXGL toolchain variant provides the cross compiler + PSL1GHT + RSXGL + raylib
+    # (raylib over RSXGL). The base ps3-toolchain image does NOT ship these.
+    container:
+      image: ghcr.io/02900/ps3-toolchain-raylib:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build
+        run: make
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps3-ray-chess
+          # The Makefile names the output after the checkout dir (the repo name),
+          # so match by glob rather than a hard-coded filename.
+          path: "*.self"
+          if-no-files-found: error

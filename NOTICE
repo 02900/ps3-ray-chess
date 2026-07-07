@@ -1,0 +1,32 @@
+RayChess PS3
+============
+
+This project is a PlayStation 3 port of ray-chess and is distributed under the
+MIT License (see LICENSE).
+
+Original work
+-------------
+ray-chess — https://github.com/GustavoHenriqueMuller/ray-chess
+Copyright (c) 2023 Gustavo Henrique Müller.
+Licensed under the MIT License.
+
+The chess engine (board, pieces, move generation, rules, rendering) is reused
+essentially verbatim from ray-chess. Only the platform I/O layer was rewritten
+for the PS3:
+  - source/Game.cpp        : window at the PS3 output resolution, a Camera2D that
+                             centers the board, gamepad quit, and asset loading
+                             from embedded memory instead of std::filesystem.
+  - data/*.png, data/*.bin : the piece sprites, move indicators, and click/cancel
+                             sounds taken verbatim from ray-chess's assets/.
+
+PS3 scaffold
+------------
+The build scaffold (Makefile, scripts/, sfo.xml, CI) originates from
+02900/ps3-boilerplate-raylib (MIT).
+
+Third-party components (not included here; linked at build time)
+----------------------------------------------------------------
+  - raylib — https://github.com/raysan5/raylib (zlib/libpng license)
+  - raylib-ps3 — https://github.com/nbe1233/raylib-ps3
+  - RSXGL — https://github.com/gzorin/RSXGL
+  - PSL1GHT SDK

@@ -1,0 +1,332 @@
+#include "Game.h"
+#include "Position.h"
+#include "raylib.h"
+#include "Renderer.h"
+#include "pieces/Queen.h"
+#include "pieces/Knight.h"
+#include "pieces/Bishop.h"
+#include "pieces/Rook.h"
+
+// Assets are embedded in the .self via bin2o (see the Makefile %.png.o rule) and
+// loaded from memory below, so the desktop build's runtime std::filesystem scan of
+// assets/ is gone. <filesystem> is also unavailable in the PS3 toolchain's libstdc++.
+
+const Color Game::LIGHT_SHADE = Color{240, 217, 181, 255};
+const Color Game::DARK_SHADE = Color{181, 136, 99, 255};
+
+Game::Game() {
+    // Open the framebuffer at the PS3 output resolution; the 640x672 game canvas is
+    // centered inside it with a Camera2D offset (see Run()).
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "RayChess");
+    SetTargetFPS(60);
+
+    // Audio (the original click/cancel SFX) is wired up via MikMod in M3; the raylib
+    // audio device is unused on this RSXGL stack.
+
+    LoadTextures();
+
+    // Init the board and calculate the initial movements for the white player.
+    board.Init();
+    CalculateAllPossibleMovements();
+}
+
+// bin2o turns each data/<name>.png into `extern const unsigned char <name>_png[]`
+// plus `extern const unsigned int <name>_png_size`. The map keys must match what the
+// engine asks for: Piece::GetName() ("wp".."bk") and the move-indicator names.
+extern "C" {
+    #define DECL_PNG(n) extern const unsigned char n##_png[]; extern const unsigned int n##_png_size;
+    DECL_PNG(wp) DECL_PNG(wr) DECL_PNG(wn) DECL_PNG(wb) DECL_PNG(wq) DECL_PNG(wk)
+    DECL_PNG(bp) DECL_PNG(br) DECL_PNG(bn) DECL_PNG(bb) DECL_PNG(bq) DECL_PNG(bk)
+    DECL_PNG(move) DECL_PNG(castling) DECL_PNG(enpassant) DECL_PNG(promotion)
+    #undef DECL_PNG
+}
+
+void Game::LoadTextures() {
+    struct Embedded { const char* key; const unsigned char* data; const unsigned int* size; };
+    #define TEX(n) { #n, n##_png, &n##_png_size }
+    static const Embedded assets[] = {
+        TEX(wp), TEX(wr), TEX(wn), TEX(wb), TEX(wq), TEX(wk),
+        TEX(bp), TEX(br), TEX(bn), TEX(bb), TEX(bq), TEX(bk),
+        TEX(move), TEX(castling), TEX(enpassant), TEX(promotion),
+    };
+    #undef TEX
+
+    for (const Embedded& a : assets) {
+        Image image = LoadImageFromMemory(".png", a.data, (int) *a.size);
+        ImageResize(&image, CELL_SIZE, CELL_SIZE);
+        textures[a.key] = LoadTextureFromImage(image);
+        UnloadImage(image);
+    }
+}
+
+Game::~Game() {
+    // Free textures.
+    for (auto const& kv : textures) {
+        UnloadTexture(kv.second);
+    }
+
+    board.Clear();
+
+    CloseWindow();
+}
+
+void Game::Run() {
+    // Center the 640x672 game canvas on the 1280x720 screen. Every Renderer draw is
+    // issued in canvas coordinates and shifted by this offset, so the Renderer's
+    // layout math stays exactly as in the desktop game.
+    Camera2D camera = {0};
+    camera.offset = (Vector2){ (float) BOARD_OFFSET_X, (float) BOARD_OFFSET_Y };
+    camera.target = (Vector2){ 0.0f, 0.0f };
+    camera.rotation = 0.0f;
+    camera.zoom = 1.0f;
+
+    while (!WindowShouldClose()){
+        // Quit to the XMB on Start (WindowShouldClose also catches the system exit).
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_MIDDLE_RIGHT)) {
+            break;
+        }
+
+        // Input. (M1: no mouse on PS3, so HandleInput is inert; gamepad cursor is M2.)
+        if (state == GAME_STATE::S_RUNNING) {
+            HandleInput();
+
+            // Getting new time.
+            time += GetFrameTime();
+        }
+
+        if (state == GAME_STATE::S_PROMOTION) {
+            HandleInputPromotion();
+        }
+
+        // Render.
+        BeginDrawing();
+        ClearBackground(Color{25, 25, 28, 255});  // letterbox around the centered board
+        BeginMode2D(camera);
+        {
+            std::vector<Move> movesOfSelectedPiece;
+
+            if (selectedPiece) {
+                movesOfSelectedPiece = possibleMovesPerPiece.at(selectedPiece);
+            }
+
+            // The 8x8 board + info bar fully cover the canvas, so no per-frame clear
+            // of the canvas is needed (Renderer::Clear would repaint the whole screen).
+            Renderer::RenderBackground();
+            Renderer::RenderPieces(board, textures);
+
+            if (state != GAME_STATE::S_PROMOTION) {
+                Renderer::RenderMovesSelectedPiece(textures, movesOfSelectedPiece);
+            }
+
+            Renderer::RenderGuideText();
+            Renderer::RenderInfoBar(round, time);
+
+            // Render promotion screen.
+            if (state == GAME_STATE::S_PROMOTION) {
+                Renderer::RenderPromotionScreen(textures, selectedPiece->color);
+            }
+
+            // Render end-game screen.
+            if (state == GAME_STATE::S_WHITE_WINS || state == GAME_STATE::S_BLACK_WINS) {
+                Renderer::RenderEndScreen(state);
+            }
+        }
+        EndMode2D();
+        EndDrawing();
+    }
+}
+
+void Game::HandleInput() {
+    if (IsMouseButtonPressed(0)) {
+        Vector2 mousePosition = GetMousePosition();
+        mousePosition.y -= Game::INFO_BAR_HEIGHT;
+
+        Position clickedPosition = {int(mousePosition.y) / CELL_SIZE, int(mousePosition.x) / CELL_SIZE};
+        Piece* clickedPiece = board.At(clickedPosition);
+
+        // Select piece.
+        if (clickedPiece != nullptr && clickedPiece->color == turn) {
+            // M3: play the "click" SFX here (MikMod).
+            selectedPiece = clickedPiece;
+        } else {
+            // Do movement.
+            Move* desiredMove = GetMoveAtPosition(clickedPosition);
+
+            if (desiredMove && selectedPiece != nullptr) {
+                DoMoveOnBoard(*desiredMove);
+            } else {
+                // M3: play the "clickCancel" SFX here (MikMod).
+            }
+
+            // Piece must still be selected to render promotion screen.
+            if (!desiredMove ||
+               (desiredMove->type != MOVE_TYPE::PROMOTION &&
+                desiredMove->type != MOVE_TYPE::ATTACK_AND_PROMOTION)
+            ) {
+                selectedPiece = nullptr;
+            }
+        }
+    }
+}
+
+void Game::HandleInputPromotion() {
+    if (IsMouseButtonPressed(0)) {
+        Vector2 mousePosition = GetMousePosition();
+        mousePosition.y -= Game::INFO_BAR_HEIGHT;
+
+        Position clickedPosition = {int(mousePosition.y) / CELL_SIZE, int(mousePosition.x) / CELL_SIZE};
+
+        if (clickedPosition.i == 3 && clickedPosition.j >= 2 && clickedPosition.j <= 5) {
+            Piece* newPiece;
+
+            if (clickedPosition.j == 2) { // Clicked queen.
+                newPiece = new Queen(selectedPiece->GetPosition(), selectedPiece->color);
+            } else if (clickedPosition.j == 3) { // Clicked rook.
+                newPiece = new Rook(selectedPiece->GetPosition(), selectedPiece->color);
+            } else if (clickedPosition.j == 4) { // Clicked bishop.
+                newPiece = new Bishop(selectedPiece->GetPosition(), selectedPiece->color);
+            } else { // Clicked knight.
+                newPiece = new Knight(selectedPiece->GetPosition(), selectedPiece->color);
+            }
+
+            // Destroy peon, create new piece at same position.
+            board.Destroy(selectedPiece->GetPosition());
+            board.Add(newPiece);
+
+            // Quit promotion, deselect peon and swap turns.
+            state = GAME_STATE::S_RUNNING;
+
+            selectedPiece = nullptr;
+            possibleMovesPerPiece.clear();
+
+            SwapTurns();
+        }
+    }
+}
+
+Move* Game::GetMoveAtPosition(const Position& position) {
+    for (auto& [piece, moves] : possibleMovesPerPiece) {
+        if (piece == selectedPiece) {
+            for (Move& move : moves) {
+                if (move.position.i == position.i && move.position.j == position.j) {
+                    return &move;
+                }
+            }
+        }
+    }
+    
+    return nullptr;
+}
+
+void Game::DoMoveOnBoard(const Move& move) {
+    board.DoMove(selectedPiece, move);
+
+    // If the move was a promotion move, show the promotion screen. Else, swap turns.
+    if (move.type == MOVE_TYPE::PROMOTION || move.type == MOVE_TYPE::ATTACK_AND_PROMOTION) {
+        state = GAME_STATE::S_PROMOTION;
+    } else {
+        SwapTurns();
+    }
+}
+
+void Game::SwapTurns() {
+    turn = Piece::GetInverseColor(turn);
+
+    // Advance round.
+    if (turn == PIECE_COLOR::C_WHITE) {
+        round++;
+    }
+
+    // Calculate all possible movements for the current pieces.
+    CalculateAllPossibleMovements();
+
+    // Check for stalemates or checkmates. If so, ends the game.
+    CheckForEndOfGame();
+}
+
+void Game::CalculateAllPossibleMovements() {
+    possibleMovesPerPiece.clear();
+
+    for (Piece* piece : board.GetPiecesByColor(turn)) {
+        possibleMovesPerPiece[piece] = piece->GetPossibleMoves(board);
+    }
+
+    // Remove the moves that could destroy the opponent's king.
+    FilterMovesThatAttackOppositeKing();
+
+    // Remove the moves that cause the player to get in check.
+    FilterMovesThatLeadToCheck();
+}
+
+void Game::CheckForEndOfGame() {
+    std::vector<Piece*> piecesOfCurrentTurn = board.GetPiecesByColor(turn);
+
+    if (board.IsInCheck(turn)) {
+        // If there are no moves possible and in check, declare checkmate.
+        if (!IsAnyMovePossible()) {
+            state = (turn == PIECE_COLOR::C_WHITE ? GAME_STATE::S_BLACK_WINS : GAME_STATE::S_WHITE_WINS);
+        }
+    } else if (!IsAnyMovePossible()) {
+        // If not in check and there is not any move possible, declare stalemate.
+        state = GAME_STATE::S_STALEMATE;
+    }
+}
+
+void Game::FilterMovesThatAttackOppositeKing() {
+    for (auto& [piece, possibleMoves] : possibleMovesPerPiece) {
+        for (int i = possibleMoves.size() - 1; i >= 0; i--) {
+            Move& move = possibleMoves[i];
+
+            // Remove moves that attack the opponent's king.
+            bool isAttackMove = move.type == MOVE_TYPE::ATTACK || move.type == MOVE_TYPE::ATTACK_AND_PROMOTION;
+
+            if (isAttackMove) {
+                Piece* attackedPiece = board.At(move.position);
+
+                if (attackedPiece->type == PIECE_TYPE::KING && attackedPiece->color != turn) {
+                    possibleMoves.erase(possibleMoves.begin() + i);
+                }
+            }
+        }
+    }
+}
+
+void Game::FilterMovesThatLeadToCheck() {
+    for (auto& [piece, possibleMoves] : possibleMovesPerPiece) {
+        for (int i = possibleMoves.size() - 1; i >= 0; i--) {
+            Move& move = possibleMoves[i];
+
+            // If short castling or long castling, check for intermediary positions between king and rook.
+            if (move.type == MOVE_TYPE::SHORT_CASTLING || move.type == MOVE_TYPE::LONG_CASTLING) {
+                std::vector<Position> intermediaryPositions;
+
+                if (move.type == MOVE_TYPE::SHORT_CASTLING) {
+                    intermediaryPositions = {{piece->GetPosition().i, 5}, {piece->GetPosition().i, 6}};
+                } else {
+                    intermediaryPositions = {{piece->GetPosition().i, 3}, {piece->GetPosition().i, 2}};
+                }
+
+                for (const Position& position : intermediaryPositions) {
+                    if (board.MoveLeadsToCheck(piece, {MOVE_TYPE::WALK, position})) {
+                        possibleMoves.erase(possibleMoves.begin() + i);
+                        break;
+                    }
+                }
+
+            // If normal move.
+            } else if (board.MoveLeadsToCheck(piece, possibleMoves[i])) {
+                possibleMoves.erase(possibleMoves.begin() + i);
+            }
+        }
+    }
+}
+
+bool Game::IsAnyMovePossible() {
+    for (const auto& [pieceName, possibleMoves] : possibleMovesPerPiece) {
+        if (!possibleMoves.empty()) {
+            return true;
+        }
+    }
+
+    return false;
+}
