@@ -16,7 +16,8 @@ from ray-chess's engine, reused essentially verbatim.
 > embedded in the `.self`); **M2** makes it **playable with the controller** — a cursor over the
 > squares (D-pad/stick), **Cross** to select/move, **Circle** to cancel, and a gamepad promotion
 > menu — driving the engine's full rules (castling, en passant, promotion, check / checkmate /
-> stalemate). Audio (**M3**) follows — see the roadmap.
+> stalemate); **M3** adds the original click/cancel sound effects (via MikMod) and polish. The port
+> is feature-complete versus ray-chess.
 
 ## Porting approach
 
@@ -27,7 +28,7 @@ ray-chess is a desktop raylib project; only the I/O rind is rewritten, the engin
 | mouse: click a square (`GetMousePosition`) | gamepad cursor (D-pad/stick, Cross=confirm, Circle=cancel) |
 | `std::filesystem` scan of `assets/textures` + `assets/sounds` | PNG/WAV embedded via `bin2o`, loaded from memory |
 | `LoadImage` from a file path | `LoadImageFromMemory(".png", …)` on the embedded bytes |
-| raylib `LoadSound`/`PlaySound` | **M3:** the real `click`/`clickCancel` WAVs via the MikMod module |
+| raylib `LoadSound`/`PlaySound` (no audio backend on RSXGL) | the real `click`/`clickCancel` WAVs via **MikMod** (`source/audio.c`) |
 | 640×672 desktop window | 1280×720 framebuffer; the 640×672 canvas centered via a `Camera2D` offset |
 | STL chess engine (board / pieces / moves / rules / rendering) | **kept as-is** — libstdc++ links via the C++ driver |
 
@@ -95,8 +96,10 @@ ps3-ray-chess/
   **Circle** to cancel, and a gamepad promotion menu — driving the engine's existing rules (castling,
   en passant, promotion, check / checkmate / stalemate) to a fully playable game. Edge-triggered
   cursor movement; the cursor + selected square are highlighted.
-- **M3 — audio + polish**: the original `click` / `clickCancel` SFX via the MikMod module
-  (`load_wav` from the embedded bytes), endgame polish, and an optional debug/FPS overlay.
+- **M3 — audio + polish** *(done)*: the original `click` / `clickCancel` SFX via MikMod
+  (`source/audio.c` — `Sample_LoadGeneric` over the embedded WAV bytes), played on
+  select / move / invalid / promotion; the stalemate end screen now renders; and the board
+  coordinates read as standard algebra (files a→h left to right, rank 1 at white's home row).
 
 ## Credits & license
 

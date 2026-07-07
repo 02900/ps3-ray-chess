@@ -2,6 +2,7 @@
 #include "Position.h"
 #include "raylib.h"
 #include "Renderer.h"
+#include "audio.h"
 #include "pieces/Queen.h"
 #include "pieces/Knight.h"
 #include "pieces/Bishop.h"
@@ -20,8 +21,9 @@ Game::Game() {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "RayChess");
     SetTargetFPS(60);
 
-    // Audio (the original click/cancel SFX) is wired up via MikMod in M3; the raylib
-    // audio device is unused on this RSXGL stack.
+    // The original click/cancel SFX play through MikMod (raylib's audio device is
+    // unused on this RSXGL stack). Defensive: a no-op if init fails.
+    audio_init();
 
     LoadTextures();
 
@@ -67,6 +69,7 @@ Game::~Game() {
 
     board.Clear();
 
+    audio_shutdown();
     CloseWindow();
 }
 
@@ -85,6 +88,8 @@ void Game::Run() {
         if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_MIDDLE_RIGHT)) {
             break;
         }
+
+        audio_update();  // drive MikMod's software mixer
 
         // Input. (M1: no mouse on PS3, so HandleInput is inert; gamepad cursor is M2.)
         if (state == GAME_STATE::S_RUNNING) {
@@ -138,8 +143,10 @@ void Game::Run() {
                 Renderer::RenderPromotionCursor(promotionChoice);
             }
 
-            // Render end-game screen.
-            if (state == GAME_STATE::S_WHITE_WINS || state == GAME_STATE::S_BLACK_WINS) {
+            // Render end-game screen (checkmate or stalemate).
+            if (state == GAME_STATE::S_WHITE_WINS ||
+                state == GAME_STATE::S_BLACK_WINS ||
+                state == GAME_STATE::S_STALEMATE) {
                 Renderer::RenderEndScreen(state);
             }
         }
@@ -185,16 +192,17 @@ void Game::HandleInput() {
 
         // Select piece.
         if (clickedPiece != nullptr && clickedPiece->color == turn) {
-            // M3: play the "click" SFX here (MikMod).
+            audio_play_click();
             selectedPiece = clickedPiece;
         } else {
             // Do movement.
             Move* desiredMove = GetMoveAtPosition(clickedPosition);
 
             if (desiredMove && selectedPiece != nullptr) {
+                audio_play_click();
                 DoMoveOnBoard(*desiredMove);
             } else {
-                // M3: play the "clickCancel" SFX here (MikMod).
+                audio_play_cancel();
             }
 
             // Piece must still be selected to render promotion screen.
@@ -215,6 +223,7 @@ void Game::HandleInputPromotion() {
 
     // Cross confirms the highlighted option.
     if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) {
+        audio_play_click();
         Position pos = selectedPiece->GetPosition();
         PIECE_COLOR color = selectedPiece->color;
         Piece* newPiece;

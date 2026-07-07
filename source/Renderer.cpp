@@ -49,7 +49,8 @@ void Renderer::RenderGuideText() {
     int padding = 3;
     int characterSize = 10;
 
-    // Render 1-8 numbers (rows).
+    // Render rank numbers (8 at the top where black sits, down to 1 at white's
+    // home row) so the board reads as standard algebraic coordinates.
     for (int i = 0; i < 8; i++) {
         Color textColor = GetShadeColor(Piece::GetInverseColor(GetColorOfCell({i, 0})));
 
@@ -58,13 +59,14 @@ void Renderer::RenderGuideText() {
         int y = i * Game::CELL_SIZE + padding + Game::INFO_BAR_HEIGHT;
 
         char text[2];
-        text[0] = 49 + i;
+        text[0] = 56 - i;   // '8' - i  ->  8 (top) .. 1 (bottom)
         text[1] = 0;
 
         DrawText(text, x, y, 20, textColor);
     }
 
-    // Render h-a characters (columns).
+    // Render file letters a..h left to right (a on the queenside/left, matching
+    // white's view — so the white queen sits on d1).
     for (int j = 0; j < 8; j++) {
         Color textColor = GetShadeColor(Piece::GetInverseColor(GetColorOfCell({7, j})));
 
@@ -73,7 +75,7 @@ void Renderer::RenderGuideText() {
         int y = Game::WINDOW_HEIGHT - characterSize * 1.75 - padding;
 
         char text[2];
-        text[0] = 97 + (7 - j);
+        text[0] = 97 + j;   // 'a' + j  ->  a (left) .. h (right)
         text[1] = 0;
 
         DrawText(text, x, y, 20, textColor);
@@ -130,7 +132,7 @@ void Renderer::RenderInfoBar(int round, double time) {
 void Renderer::RenderEndScreen(GAME_STATE state) {
     DrawRectangle(0, 0, Game::WINDOW_WIDTH, Game::WINDOW_HEIGHT, Color{0, 0, 0, 127});
 
-    const char* text;
+    const char* text = "";
 
     if (state == GAME_STATE::S_WHITE_WINS) {
         text = "White wins";
