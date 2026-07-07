@@ -27,6 +27,7 @@ public:
     Position GetPosition();
     std::string GetName();
     bool HasMoved();
+    void SetHasMoved(bool moved) { hasMoved = moved; }  // for restoring history snapshots
 
     const PIECE_COLOR color;
     const PIECE_TYPE type;

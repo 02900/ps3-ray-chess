@@ -15,6 +15,8 @@ void audio_shutdown(void);  /* on exit                                      */
 
 void audio_play_click(void);   /* piece selected / move played */
 void audio_play_cancel(void);  /* invalid action               */
+void audio_play_check(void);   /* the side to move is in check  */
+void audio_play_win(void);     /* checkmate / flag-fall victory */
 
 #ifdef __cplusplus
 }

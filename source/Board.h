@@ -28,6 +28,10 @@ public:
     std::vector<Piece*> GetPiecesByColor(PIECE_COLOR color) const;
     Piece* GetLastMovedPiece() const;
 
+    // Accessors for the en-passant marker, used when saving/restoring history snapshots.
+    Position GetLastMovedPosition() const { return lastMovedPiecePosition; }
+    void SetLastMovedPosition(const Position& position) { lastMovedPiecePosition = position; }
+
     void DoMove(Piece* piece, const Move& move);
     bool MoveLeadsToCheck(Piece* piece, const Move& move);
     bool IsInCheck(PIECE_COLOR color);

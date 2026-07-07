@@ -15,6 +15,15 @@
 const Color Game::LIGHT_SHADE = Color{240, 217, 181, 255};
 const Color Game::DARK_SHADE = Color{181, 136, 99, 255};
 
+// Fischer time-control presets (base seconds | increment seconds). Index 0 = no clock.
+const Game::TimeControl Game::TIME_CONTROLS[] = {
+    { "Sin reloj",   0, 0 },
+    { "3 | 2",     180, 2 },
+    { "5 | 3",     300, 3 },
+    { "10 | 5",    600, 5 },
+};
+const int Game::TIME_CONTROL_COUNT = 4;
+
 Game::Game() {
     // Open the framebuffer at the PS3 output resolution; the 640x672 game canvas is
     // centered inside it with a Camera2D offset (see Run()).
@@ -27,9 +36,8 @@ Game::Game() {
 
     LoadTextures();
 
-    // Init the board and calculate the initial movements for the white player.
-    board.Init();
-    CalculateAllPossibleMovements();
+    // Set up the initial position, clocks and history.
+    Reset();
 }
 
 // bin2o turns each data/<name>.png into `extern const unsigned char <name>_png[]`
@@ -91,19 +99,37 @@ void Game::Run() {
 
         audio_update();  // drive MikMod's software mixer
 
-        // Input. (M1: no mouse on PS3, so HandleInput is inert; gamepad cursor is M2.)
-        if (state == GAME_STATE::S_RUNNING) {
-            HandleInput();
-
-            // Getting new time.
-            time += GetFrameTime();
+        // Select toggles the settings menu (pauses play while open).
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_MIDDLE_LEFT)) {
+            menuOpen = !menuOpen;
+            menuIndex = 0;
         }
 
-        if (state == GAME_STATE::S_PROMOTION) {
-            HandleInputPromotion();
+        if (menuOpen) {
+            HandleMenuInput();
+        } else {
+            // Triangle flips the board view. L1 / R1 step back / forward through the
+            // move history (no confirmation); these work even after the game ends.
+            if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_UP)) ToggleFlip();
+            if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_TRIGGER_1))  HistoryBack();
+            if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_TRIGGER_1)) HistoryForward();
+
+            if (state == GAME_STATE::S_RUNNING) {
+                HandleInput();
+
+                // The clock only runs on the live position (not while reviewing history).
+                if (clockActive && AtLiveTip()) {
+                    UpdateClocks();
+                } else if (!clockActive) {
+                    time += GetFrameTime();  // free-running counter when there's no clock
+                }
+            } else if (state == GAME_STATE::S_PROMOTION) {
+                HandleInputPromotion();
+            }
         }
 
         // Render.
+        Renderer::SetFlipped(flipped);
         BeginDrawing();
         ClearBackground(Color{25, 25, 28, 255});  // letterbox around the centered board
         BeginMode2D(camera);
@@ -129,13 +155,13 @@ void Game::Run() {
                 Renderer::RenderMovesSelectedPiece(textures, movesOfSelectedPiece);
             }
 
-            // The gamepad cursor sits on top of the board.
-            if (state == GAME_STATE::S_RUNNING) {
+            // The gamepad cursor sits on top of the board (hidden while in the menu).
+            if (state == GAME_STATE::S_RUNNING && !menuOpen) {
                 Renderer::RenderCursor(cursor);
             }
 
             Renderer::RenderGuideText();
-            Renderer::RenderInfoBar(round, time);
+            Renderer::RenderInfoBar(round, time, clockActive, whiteClock, blackClock, player1IsWhite);
 
             // Render promotion screen (with the highlighted option).
             if (state == GAME_STATE::S_PROMOTION) {
@@ -148,6 +174,18 @@ void Game::Run() {
                 state == GAME_STATE::S_BLACK_WINS ||
                 state == GAME_STATE::S_STALEMATE) {
                 Renderer::RenderEndScreen(state);
+            }
+
+            // The settings menu overlays everything.
+            if (menuOpen) {
+                std::vector<std::string> lines = {
+                    "Ritmo: " + std::string(TIME_CONTROLS[timeControlIndex].label),
+                    "Jugador 1: " + std::string(player1IsWhite ? "Blancas" : "Negras"),
+                    "Auto-invertir: " + std::string(autoFlip ? "Si" : "No"),
+                    "Reiniciar partida",
+                    "Reanudar",
+                };
+                Renderer::RenderMenu(lines, menuIndex);
             }
         }
         EndMode2D();
@@ -163,15 +201,22 @@ void Game::UpdateCursor() {
     float ay = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
 
     bool dir[4];
-    dir[0] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_UP)    || ay < -DZ; // up
-    dir[1] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN)  || ay >  DZ; // down
-    dir[2] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  || ax < -DZ; // left
-    dir[3] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || ax >  DZ; // right
+    dir[0] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_UP)    || ay < -DZ; // screen up
+    dir[1] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN)  || ay >  DZ; // screen down
+    dir[2] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  || ax < -DZ; // screen left
+    dir[3] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || ax >  DZ; // screen right
 
-    if (dir[0] && !dirPrev[0] && cursor.i > 0) cursor.i--;
-    if (dir[1] && !dirPrev[1] && cursor.i < 7) cursor.i++;
-    if (dir[2] && !dirPrev[2] && cursor.j > 0) cursor.j--;
-    if (dir[3] && !dirPrev[3] && cursor.j < 7) cursor.j++;
+    // Translate screen-space intent into board deltas. When flipped, screen up = higher
+    // board row, so both axes invert.
+    int di = 0, dj = 0;
+    if (dir[0] && !dirPrev[0]) di -= 1;
+    if (dir[1] && !dirPrev[1]) di += 1;
+    if (dir[2] && !dirPrev[2]) dj -= 1;
+    if (dir[3] && !dirPrev[3]) dj += 1;
+    if (flipped) { di = -di; dj = -dj; }
+
+    if (cursor.i + di >= 0 && cursor.i + di < 8) cursor.i += di;
+    if (cursor.j + dj >= 0 && cursor.j + dj < 8) cursor.j += dj;
 
     for (int k = 0; k < 4; k++) dirPrev[k] = dir[k];
 }
@@ -279,6 +324,12 @@ void Game::DoMoveOnBoard(const Move& move) {
 }
 
 void Game::SwapTurns() {
+    // Fischer increment: the player who just moved (the current `turn`) gets it.
+    if (clockActive) {
+        int inc = TIME_CONTROLS[timeControlIndex].incSec;
+        if (turn == PIECE_COLOR::C_WHITE) whiteClock += inc; else blackClock += inc;
+    }
+
     turn = Piece::GetInverseColor(turn);
 
     // Advance round.
@@ -291,6 +342,18 @@ void Game::SwapTurns() {
 
     // Check for stalemates or checkmates. If so, ends the game.
     CheckForEndOfGame();
+
+    // Feedback: victory fanfare on checkmate, alert when the side to move is in check.
+    if (state == GAME_STATE::S_WHITE_WINS || state == GAME_STATE::S_BLACK_WINS) {
+        audio_play_win();
+    } else if (state == GAME_STATE::S_RUNNING && board.IsInCheck(turn)) {
+        audio_play_check();
+    }
+
+    if (autoFlip) ApplyAutoFlip();
+
+    // Record the resulting position for L1/R1 navigation (drops any redo branch).
+    CaptureSnapshot();
 }
 
 void Game::CalculateAllPossibleMovements() {
@@ -378,4 +441,163 @@ bool Game::IsAnyMovePossible() {
     }
 
     return false;
+}
+
+// --- Match setup / flow -----------------------------------------------------
+
+void Game::Reset() {
+    board.Clear();
+    board.Init();
+
+    turn = PIECE_COLOR::C_WHITE;
+    state = GAME_STATE::S_RUNNING;
+    selectedPiece = nullptr;
+    possibleMovesPerPiece.clear();
+    round = 1;
+    time = 0.0;
+    promotionChoice = 0;
+    cursor = {6, 4};
+    flipped = false;
+
+    ApplyTimeControl();
+    CalculateAllPossibleMovements();
+
+    // Seed the history with the initial position.
+    history.clear();
+    historyIndex = -1;
+    CaptureSnapshot();
+
+    if (autoFlip) ApplyAutoFlip();
+}
+
+void Game::ApplyTimeControl() {
+    const TimeControl& tc = TIME_CONTROLS[timeControlIndex];
+    clockActive = tc.baseSec > 0;
+    whiteClock = tc.baseSec;
+    blackClock = tc.baseSec;
+}
+
+void Game::UpdateClocks() {
+    double dt = GetFrameTime();
+
+    if (turn == PIECE_COLOR::C_WHITE) {
+        whiteClock -= dt;
+        if (whiteClock <= 0.0) { whiteClock = 0.0; state = GAME_STATE::S_BLACK_WINS; audio_play_win(); }
+    } else {
+        blackClock -= dt;
+        if (blackClock <= 0.0) { blackClock = 0.0; state = GAME_STATE::S_WHITE_WINS; audio_play_win(); }
+    }
+}
+
+void Game::ToggleFlip() {
+    flipped = !flipped;
+}
+
+void Game::ApplyAutoFlip() {
+    // Keep the side to move at the bottom of the screen.
+    flipped = (turn == PIECE_COLOR::C_BLACK);
+}
+
+// --- Move history -----------------------------------------------------------
+
+Game::Snapshot Game::MakeSnapshot() const {
+    Snapshot s;
+    for (Piece* p : board.GetPiecesByColor(PIECE_COLOR::C_WHITE)) {
+        s.pieces.push_back({ p->type, p->color, p->GetPosition().i, p->GetPosition().j, p->HasMoved() });
+    }
+    for (Piece* p : board.GetPiecesByColor(PIECE_COLOR::C_BLACK)) {
+        s.pieces.push_back({ p->type, p->color, p->GetPosition().i, p->GetPosition().j, p->HasMoved() });
+    }
+    s.lastMoved = board.GetLastMovedPosition();
+    s.turn = turn;
+    s.round = round;
+    s.state = state;
+    s.whiteClock = whiteClock;
+    s.blackClock = blackClock;
+    return s;
+}
+
+void Game::RestoreSnapshot(const Snapshot& snapshot) {
+    board.Clear();
+    for (const PieceState& ps : snapshot.pieces) {
+        Piece* p = Piece::CreatePieceByType(ps.type, { ps.i, ps.j }, ps.color);
+        p->SetHasMoved(ps.hasMoved);
+        board.Add(p);
+    }
+    board.SetLastMovedPosition(snapshot.lastMoved);
+
+    turn = snapshot.turn;
+    round = snapshot.round;
+    state = snapshot.state;
+    whiteClock = snapshot.whiteClock;
+    blackClock = snapshot.blackClock;
+
+    selectedPiece = nullptr;
+    promotionChoice = 0;
+    CalculateAllPossibleMovements();
+
+    if (autoFlip) ApplyAutoFlip();
+}
+
+void Game::CaptureSnapshot() {
+    // Making a move from a past node discards the old future (the branch it superseded).
+    if (historyIndex < (int) history.size() - 1) {
+        history.resize(historyIndex + 1);
+    }
+    history.push_back(MakeSnapshot());
+    historyIndex = (int) history.size() - 1;
+}
+
+void Game::HistoryBack() {
+    if (historyIndex > 0) {
+        historyIndex--;
+        RestoreSnapshot(history[historyIndex]);
+    }
+}
+
+void Game::HistoryForward() {
+    if (historyIndex < (int) history.size() - 1) {
+        historyIndex++;
+        RestoreSnapshot(history[historyIndex]);
+    }
+}
+
+// --- Settings menu ----------------------------------------------------------
+
+void Game::HandleMenuInput() {
+    const int MENU_COUNT = 5;
+
+    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_UP))   menuIndex = (menuIndex + MENU_COUNT - 1) % MENU_COUNT;
+    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN)) menuIndex = (menuIndex + 1) % MENU_COUNT;
+
+    int delta = 0;
+    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT))  delta = -1;
+    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) delta = +1;
+
+    if (delta != 0) {
+        if (menuIndex == 0) {          // time control
+            timeControlIndex = (timeControlIndex + delta + TIME_CONTROL_COUNT) % TIME_CONTROL_COUNT;
+            ApplyTimeControl();        // changing the pace resets the clocks
+        } else if (menuIndex == 1) {   // which colour is Jugador 1 (labels)
+            player1IsWhite = !player1IsWhite;
+        } else if (menuIndex == 2) {   // auto-flip
+            autoFlip = !autoFlip;
+            if (autoFlip) ApplyAutoFlip();
+        }
+    }
+
+    // Cross activates the action rows.
+    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) {
+        if (menuIndex == 3) {          // restart
+            Reset();
+            menuOpen = false;
+        } else if (menuIndex == 4) {   // resume
+            menuOpen = false;
+        }
+    }
+
+    // Circle also closes the menu.
+    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) {
+        menuOpen = false;
+    }
 }

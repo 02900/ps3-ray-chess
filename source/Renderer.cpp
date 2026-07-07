@@ -3,6 +3,19 @@
 #include "Game.h"
 #include "compat.h"  // compat::to_string (PS3 newlib lacks std::to_string)
 
+bool Renderer::s_flipped = false;
+
+void Renderer::SetFlipped(bool flipped) {
+    s_flipped = flipped;
+}
+
+void Renderer::CellOrigin(int i, int j, int& x, int& y) {
+    int si = s_flipped ? 7 - i : i;
+    int sj = s_flipped ? 7 - j : j;
+    x = sj * Game::CELL_SIZE;
+    y = si * Game::CELL_SIZE + Game::INFO_BAR_HEIGHT;
+}
+
 void Renderer::Clear() {
     ClearBackground(WHITE);
 }
@@ -10,9 +23,10 @@ void Renderer::Clear() {
 void Renderer::RenderBackground() {
     for (int i = 0; i < 8; i++) {
         for (int j = 0; j < 8; j++) {
-            int x = j * Game::CELL_SIZE;
-            int y = i * Game::CELL_SIZE + Game::INFO_BAR_HEIGHT;
+            int x, y;
+            CellOrigin(i, j, x, y);
 
+            // Colour is tied to the board square (a1 dark), so it stays correct when flipped.
             Color cellColor = GetShadeColor(GetColorOfCell({i, j}));
             DrawRectangle(x, y, Game::CELL_SIZE, Game::CELL_SIZE, cellColor);
         }
@@ -25,9 +39,8 @@ void Renderer::RenderPieces(const Board& board, const std::map<std::string, Text
             Piece* piece = board.At({i, j});
 
             if (piece != nullptr) {
-                int x = j * Game::CELL_SIZE;
-                int y = i * Game::CELL_SIZE + Game::INFO_BAR_HEIGHT;
-
+                int x, y;
+                CellOrigin(i, j, x, y);
                 DrawTexture(textures.at(piece->GetName()), x, y, WHITE);
             }
         }
@@ -36,12 +49,9 @@ void Renderer::RenderPieces(const Board& board, const std::map<std::string, Text
 
 void Renderer::RenderMovesSelectedPiece(const std::map<std::string, Texture>& textures, const std::vector<Move>& possibleMoves) {
     for (const Move& move : possibleMoves) {
-        DrawTexture(
-            textures.at(GetTextureNameFromMoveType(move.type)),
-            move.position.j * Game::CELL_SIZE,
-            move.position.i * Game::CELL_SIZE + Game::INFO_BAR_HEIGHT,
-            WHITE
-        );
+        int x, y;
+        CellOrigin(move.position.i, move.position.j, x, y);
+        DrawTexture(textures.at(GetTextureNameFromMoveType(move.type)), x, y, WHITE);
     }
 }
 
@@ -49,33 +59,35 @@ void Renderer::RenderGuideText() {
     int padding = 3;
     int characterSize = 10;
 
-    // Render rank numbers (8 at the top where black sits, down to 1 at white's
-    // home row) so the board reads as standard algebraic coordinates.
+    // Rank numbers on the left edge: each board row i is rank (8 - i), drawn at that
+    // row's screen position (so when flipped, rank 1 appears at the top).
+    int leftBoardCol = s_flipped ? 7 : 0;  // board column under the left screen edge
     for (int i = 0; i < 8; i++) {
-        Color textColor = GetShadeColor(Piece::GetInverseColor(GetColorOfCell({i, 0})));
+        Color textColor = GetShadeColor(Piece::GetInverseColor(GetColorOfCell({i, leftBoardCol})));
 
-        // Render text.
+        int si = s_flipped ? 7 - i : i;
         int x = padding;
-        int y = i * Game::CELL_SIZE + padding + Game::INFO_BAR_HEIGHT;
+        int y = si * Game::CELL_SIZE + padding + Game::INFO_BAR_HEIGHT;
 
         char text[2];
-        text[0] = 56 - i;   // '8' - i  ->  8 (top) .. 1 (bottom)
+        text[0] = 56 - i;   // '8' - i  ->  rank of board row i
         text[1] = 0;
 
         DrawText(text, x, y, 20, textColor);
     }
 
-    // Render file letters a..h left to right (a on the queenside/left, matching
-    // white's view — so the white queen sits on d1).
+    // File letters on the bottom edge: each board column j is file ('a' + j), drawn at
+    // that column's screen position (so when flipped, the a-file appears on the right).
+    int bottomBoardRow = s_flipped ? 0 : 7;  // board row under the bottom screen edge
     for (int j = 0; j < 8; j++) {
-        Color textColor = GetShadeColor(Piece::GetInverseColor(GetColorOfCell({7, j})));
+        Color textColor = GetShadeColor(Piece::GetInverseColor(GetColorOfCell({bottomBoardRow, j})));
 
-        // Render text.
-        int x = (j + 1) * Game::CELL_SIZE - characterSize - padding;
+        int sj = s_flipped ? 7 - j : j;
+        int x = (sj + 1) * Game::CELL_SIZE - characterSize - padding;
         int y = Game::WINDOW_HEIGHT - characterSize * 1.75 - padding;
 
         char text[2];
-        text[0] = 97 + j;   // 'a' + j  ->  a (left) .. h (right)
+        text[0] = 97 + j;   // 'a' + j  ->  file of board column j
         text[1] = 0;
 
         DrawText(text, x, y, 20, textColor);
@@ -116,17 +128,72 @@ void Renderer::RenderPromotionScreen(const std::map<std::string, Texture>& textu
     }
 }
 
-void Renderer::RenderInfoBar(int round, double time) {
+static std::string FormatClock(double seconds) {
+    if (seconds < 0) seconds = 0;
+    int total = (int) seconds;
+    int m = total / 60;
+    int s = total % 60;
+    std::string ss = compat::to_string(s);
+    if (s < 10) ss = "0" + ss;
+    return compat::to_string(m) + ":" + ss;
+}
+
+void Renderer::RenderInfoBar(int round, double time, bool clockActive, double whiteClock, double blackClock, bool player1IsWhite) {
     DrawRectangle(0, 0, Game::WINDOW_WIDTH, Game::INFO_BAR_HEIGHT, BLACK);
 
-    std::string roundText = "Round: " + compat::to_string(round);
-    std::string timeText = "Time: " + compat::to_string((int) time) + "s";
-
-    int timeTextWidth = MeasureText(timeText.c_str(), 20);
     int padding = 5;
+    int y = Game::INFO_BAR_HEIGHT / 2 - 10;
 
-    DrawText(roundText.c_str(), padding, Game::INFO_BAR_HEIGHT / 2 - 10, 20, WHITE);
-    DrawText(timeText.c_str(), Game::WINDOW_WIDTH - timeTextWidth - padding, Game::INFO_BAR_HEIGHT / 2 - 10, 20, WHITE);
+    // Jugador 1 on the left, Jugador 2 on the right, each tagged with its colour
+    // (B = Blancas, N = Negras) and, when a clock is active, its remaining time.
+    double j1Clock = player1IsWhite ? whiteClock : blackClock;
+    double j2Clock = player1IsWhite ? blackClock : whiteClock;
+
+    std::string leftText  = std::string("J1 ") + (player1IsWhite ? "B" : "N");
+    std::string rightText = std::string("J2 ") + (player1IsWhite ? "N" : "B");
+    if (clockActive) {
+        leftText  += " " + FormatClock(j1Clock);
+        rightText += " " + FormatClock(j2Clock);
+    }
+
+    int rightWidth = MeasureText(rightText.c_str(), 20);
+    DrawText(leftText.c_str(), padding, y, 20, WHITE);
+    DrawText(rightText.c_str(), Game::WINDOW_WIDTH - rightWidth - padding, y, 20, WHITE);
+
+    // Centre: round number, plus the free-running counter when there's no clock.
+    std::string centerText = "R" + compat::to_string(round);
+    if (!clockActive) centerText += "  " + compat::to_string((int) time) + "s";
+    int cw = MeasureText(centerText.c_str(), 20);
+    DrawText(centerText.c_str(), Game::WINDOW_WIDTH / 2 - cw / 2, y, 20, GRAY);
+}
+
+void Renderer::RenderMenu(const std::vector<std::string>& lines, int selected) {
+    // Dim the whole board behind the panel.
+    DrawRectangle(0, 0, Game::WINDOW_WIDTH, Game::WINDOW_HEIGHT, Color{0, 0, 0, 160});
+
+    int rowH = 44;
+    int panelW = 400;
+    int panelH = 80 + (int) lines.size() * rowH;
+    int px = Game::WINDOW_WIDTH / 2 - panelW / 2;
+    int py = Game::WINDOW_HEIGHT / 2 - panelH / 2;
+
+    DrawRectangle(px, py, panelW, panelH, Color{28, 28, 34, 244});
+    Rectangle border = { (float) px, (float) py, (float) panelW, (float) panelH };
+    DrawRectangleLinesEx(border, 2, Color{255, 205, 0, 255});
+
+    DrawText("Ajustes", px + 20, py + 16, 28, WHITE);
+
+    int y0 = py + 60;
+    for (int i = 0; i < (int) lines.size(); i++) {
+        int ry = y0 + i * rowH;
+        if (i == selected) {
+            DrawRectangle(px + 8, ry - 6, panelW - 16, rowH - 4, Color{80, 160, 255, 110});
+        }
+        DrawText(lines[i].c_str(), px + 24, ry, 22, WHITE);
+    }
+
+    DrawText("D-pad mover  Izq/Der cambiar  Cross elegir  O/Select cerrar",
+             px + 16, py + panelH - 26, 13, GRAY);
 }
 
 void Renderer::RenderEndScreen(GAME_STATE state) {
@@ -147,16 +214,16 @@ void Renderer::RenderEndScreen(GAME_STATE state) {
 }
 
 void Renderer::RenderCursor(const Position& cursor) {
-    int x = cursor.j * Game::CELL_SIZE;
-    int y = cursor.i * Game::CELL_SIZE + Game::INFO_BAR_HEIGHT;
+    int x, y;
+    CellOrigin(cursor.i, cursor.j, x, y);
 
     Rectangle rect = { (float) x, (float) y, (float) Game::CELL_SIZE, (float) Game::CELL_SIZE };
     DrawRectangleLinesEx(rect, 4, Color{255, 205, 0, 255});  // gold outline
 }
 
 void Renderer::RenderSelection(const Position& position) {
-    int x = position.j * Game::CELL_SIZE;
-    int y = position.i * Game::CELL_SIZE + Game::INFO_BAR_HEIGHT;
+    int x, y;
+    CellOrigin(position.i, position.j, x, y);
 
     DrawRectangle(x, y, Game::CELL_SIZE, Game::CELL_SIZE, Color{80, 160, 255, 110});  // translucent blue
 }

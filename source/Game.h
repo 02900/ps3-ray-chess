@@ -3,6 +3,7 @@
 
 #include <string>
 #include <map>
+#include <vector>
 
 #include "pieces/Piece.h"
 #include "Board.h"
@@ -37,6 +38,11 @@ public:
     const static Color LIGHT_SHADE;
     const static Color DARK_SHADE;
 
+    // Time-control presets (Fischer: base minutes | increment seconds).
+    struct TimeControl { const char* label; int baseSec; int incSec; };
+    const static TimeControl TIME_CONTROLS[];
+    const static int TIME_CONTROL_COUNT;
+
     Game();
     ~Game();
 
@@ -49,6 +55,7 @@ private:
     void UpdateCursor();       // move the board cursor from the D-pad / left stick
     void HandleInput();
     void HandleInputPromotion();
+    void HandleMenuInput();
     Move* GetMoveAtPosition(const Position& position);
     void DoMoveOnBoard(const Move& move);
 
@@ -58,7 +65,32 @@ private:
     void FilterMovesThatLeadToCheck();
     bool IsAnyMovePossible();
 
-    // Assets. (Sounds are added in M3 via the MikMod audio module.)
+    // Match setup / flow.
+    void Reset();               // (re)start a game from the initial position
+    void ApplyTimeControl();    // load the selected preset into the clocks
+    void UpdateClocks();        // tick the side to move; flag-fall ends the game
+    void ToggleFlip();          // flip the board view (Triangle)
+    void ApplyAutoFlip();       // keep the side to move at the bottom
+
+    // Move history (L1 back / R1 forward). A snapshot is the full position; making a
+    // move from a past node truncates the future (branch), per the request.
+    struct PieceState { PIECE_TYPE type; PIECE_COLOR color; int i, j; bool hasMoved; };
+    struct Snapshot {
+        std::vector<PieceState> pieces;
+        Position lastMoved;
+        PIECE_COLOR turn;
+        int round;
+        GAME_STATE state;
+        double whiteClock, blackClock;
+    };
+    Snapshot MakeSnapshot() const;
+    void RestoreSnapshot(const Snapshot& snapshot);
+    void CaptureSnapshot();     // append current position, dropping any redo branch
+    void HistoryBack();
+    void HistoryForward();
+    bool AtLiveTip() const { return historyIndex == (int) history.size() - 1; }
+
+    // Assets.
     std::map<std::string, Texture> textures;
 
     // Game state.
@@ -77,7 +109,26 @@ private:
     bool dirPrev[4] = {false, false, false, false};
     int promotionChoice = 0;
 
-    // Game information (current round and time).
+    // Settings (edited in the Select menu).
+    int timeControlIndex = 0;   // index into TIME_CONTROLS
+    bool player1IsWhite = true; // info-bar labels: which colour is "Jugador 1"
+    bool autoFlip = false;      // flip the board on every turn change
+
+    // View / menu.
+    bool flipped = false;       // black at the bottom when true
+    bool menuOpen = false;
+    int menuIndex = 0;
+
+    // Clocks (seconds remaining; only used when the preset has a base time).
+    bool clockActive = false;
+    double whiteClock = 0.0;
+    double blackClock = 0.0;
+
+    // Move history.
+    std::vector<Snapshot> history;
+    int historyIndex = -1;
+
+    // Game information (current round and free-running time when there's no clock).
     int round = 1;
     double time = 0;
 };
