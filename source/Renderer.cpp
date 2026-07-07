@@ -144,6 +144,31 @@ void Renderer::RenderEndScreen(GAME_STATE state) {
     DrawText(text, Game::WINDOW_WIDTH / 2 - textLength / 2, Game::WINDOW_HEIGHT / 2, 40, WHITE);
 }
 
+void Renderer::RenderCursor(const Position& cursor) {
+    int x = cursor.j * Game::CELL_SIZE;
+    int y = cursor.i * Game::CELL_SIZE + Game::INFO_BAR_HEIGHT;
+
+    Rectangle rect = { (float) x, (float) y, (float) Game::CELL_SIZE, (float) Game::CELL_SIZE };
+    DrawRectangleLinesEx(rect, 4, Color{255, 205, 0, 255});  // gold outline
+}
+
+void Renderer::RenderSelection(const Position& position) {
+    int x = position.j * Game::CELL_SIZE;
+    int y = position.i * Game::CELL_SIZE + Game::INFO_BAR_HEIGHT;
+
+    DrawRectangle(x, y, Game::CELL_SIZE, Game::CELL_SIZE, Color{80, 160, 255, 110});  // translucent blue
+}
+
+void Renderer::RenderPromotionCursor(int choice) {
+    // The promotion options sit on row 3, columns 2..5 (Queen, Rook, Bishop, Knight),
+    // matching RenderPromotionScreen.
+    int x = (2 + choice) * Game::CELL_SIZE;
+    int y = 3 * Game::CELL_SIZE + Game::INFO_BAR_HEIGHT;
+
+    Rectangle rect = { (float) x, (float) y, (float) Game::CELL_SIZE, (float) Game::CELL_SIZE };
+    DrawRectangleLinesEx(rect, 4, Color{255, 205, 0, 255});  // gold outline
+}
+
 void Renderer::ChangeMouseCursor(const Board& board, const std::vector<Move>& possibleMoves, PIECE_COLOR turn, bool inPromotion) {
     Vector2 mousePosition = GetMousePosition();
     mousePosition.y -= Game::INFO_BAR_HEIGHT;

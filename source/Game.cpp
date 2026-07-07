@@ -112,18 +112,30 @@ void Game::Run() {
             // The 8x8 board + info bar fully cover the canvas, so no per-frame clear
             // of the canvas is needed (Renderer::Clear would repaint the whole screen).
             Renderer::RenderBackground();
+
+            // Highlight the selected piece's square underneath the pieces.
+            if (state == GAME_STATE::S_RUNNING && selectedPiece != nullptr) {
+                Renderer::RenderSelection(selectedPiece->GetPosition());
+            }
+
             Renderer::RenderPieces(board, textures);
 
             if (state != GAME_STATE::S_PROMOTION) {
                 Renderer::RenderMovesSelectedPiece(textures, movesOfSelectedPiece);
             }
 
+            // The gamepad cursor sits on top of the board.
+            if (state == GAME_STATE::S_RUNNING) {
+                Renderer::RenderCursor(cursor);
+            }
+
             Renderer::RenderGuideText();
             Renderer::RenderInfoBar(round, time);
 
-            // Render promotion screen.
+            // Render promotion screen (with the highlighted option).
             if (state == GAME_STATE::S_PROMOTION) {
                 Renderer::RenderPromotionScreen(textures, selectedPiece->color);
+                Renderer::RenderPromotionCursor(promotionChoice);
             }
 
             // Render end-game screen.
@@ -136,12 +148,39 @@ void Game::Run() {
     }
 }
 
-void Game::HandleInput() {
-    if (IsMouseButtonPressed(0)) {
-        Vector2 mousePosition = GetMousePosition();
-        mousePosition.y -= Game::INFO_BAR_HEIGHT;
+// Move the board cursor one cell per press from the D-pad or the left stick.
+// Edge-triggered (via dirPrev) so a held direction doesn't skate across the board.
+void Game::UpdateCursor() {
+    const float DZ = 0.5f;  // analog dead-zone
+    float ax = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
+    float ay = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
 
-        Position clickedPosition = {int(mousePosition.y) / CELL_SIZE, int(mousePosition.x) / CELL_SIZE};
+    bool dir[4];
+    dir[0] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_UP)    || ay < -DZ; // up
+    dir[1] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN)  || ay >  DZ; // down
+    dir[2] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  || ax < -DZ; // left
+    dir[3] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || ax >  DZ; // right
+
+    if (dir[0] && !dirPrev[0] && cursor.i > 0) cursor.i--;
+    if (dir[1] && !dirPrev[1] && cursor.i < 7) cursor.i++;
+    if (dir[2] && !dirPrev[2] && cursor.j > 0) cursor.j--;
+    if (dir[3] && !dirPrev[3] && cursor.j < 7) cursor.j++;
+
+    for (int k = 0; k < 4; k++) dirPrev[k] = dir[k];
+}
+
+void Game::HandleInput() {
+    UpdateCursor();
+
+    // Circle cancels the current selection.
+    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) {
+        selectedPiece = nullptr;
+        return;
+    }
+
+    // Cross acts on the cursor cell — the same select/move logic the mouse drove.
+    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) {
+        Position clickedPosition = cursor;
         Piece* clickedPiece = board.At(clickedPosition);
 
         // Select piece.
@@ -170,37 +209,38 @@ void Game::HandleInput() {
 }
 
 void Game::HandleInputPromotion() {
-    if (IsMouseButtonPressed(0)) {
-        Vector2 mousePosition = GetMousePosition();
-        mousePosition.y -= Game::INFO_BAR_HEIGHT;
+    // Left/Right move through the four options (Queen, Rook, Bishop, Knight).
+    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  && promotionChoice > 0) promotionChoice--;
+    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) && promotionChoice < 3) promotionChoice++;
 
-        Position clickedPosition = {int(mousePosition.y) / CELL_SIZE, int(mousePosition.x) / CELL_SIZE};
+    // Cross confirms the highlighted option.
+    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) {
+        Position pos = selectedPiece->GetPosition();
+        PIECE_COLOR color = selectedPiece->color;
+        Piece* newPiece;
 
-        if (clickedPosition.i == 3 && clickedPosition.j >= 2 && clickedPosition.j <= 5) {
-            Piece* newPiece;
-
-            if (clickedPosition.j == 2) { // Clicked queen.
-                newPiece = new Queen(selectedPiece->GetPosition(), selectedPiece->color);
-            } else if (clickedPosition.j == 3) { // Clicked rook.
-                newPiece = new Rook(selectedPiece->GetPosition(), selectedPiece->color);
-            } else if (clickedPosition.j == 4) { // Clicked bishop.
-                newPiece = new Bishop(selectedPiece->GetPosition(), selectedPiece->color);
-            } else { // Clicked knight.
-                newPiece = new Knight(selectedPiece->GetPosition(), selectedPiece->color);
-            }
-
-            // Destroy peon, create new piece at same position.
-            board.Destroy(selectedPiece->GetPosition());
-            board.Add(newPiece);
-
-            // Quit promotion, deselect peon and swap turns.
-            state = GAME_STATE::S_RUNNING;
-
-            selectedPiece = nullptr;
-            possibleMovesPerPiece.clear();
-
-            SwapTurns();
+        if (promotionChoice == 0) {        // Queen.
+            newPiece = new Queen(pos, color);
+        } else if (promotionChoice == 1) { // Rook.
+            newPiece = new Rook(pos, color);
+        } else if (promotionChoice == 2) { // Bishop.
+            newPiece = new Bishop(pos, color);
+        } else {                           // Knight.
+            newPiece = new Knight(pos, color);
         }
+
+        // Destroy peon, create new piece at same position.
+        board.Destroy(pos);
+        board.Add(newPiece);
+
+        // Quit promotion, deselect peon and swap turns.
+        state = GAME_STATE::S_RUNNING;
+
+        selectedPiece = nullptr;
+        possibleMovesPerPiece.clear();
+        promotionChoice = 0;
+
+        SwapTurns();
     }
 }
 

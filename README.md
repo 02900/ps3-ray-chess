@@ -12,9 +12,11 @@ from ray-chess's engine, reused essentially verbatim.
 > ## Status: M1 — pipeline (playable milestones in progress)
 > ray-chess is already a raylib game, so the port is a clean *"rind swap"*: the chess engine
 > (`Board`, `pieces/*`, `Renderer`, most of `Game`) is reused as-is, and only the platform I/O layer
-> is rewritten for the PS3. **M1** brings up the pipeline: the board and all 32 pieces render at
-> 1280×720 on the console, with assets embedded in the `.self`. Gamepad play (**M2**) and audio
-> (**M3**) follow — see the roadmap.
+> is rewritten for the PS3. **M1** brought up the pipeline (board + all 32 pieces at 1280×720, assets
+> embedded in the `.self`); **M2** makes it **playable with the controller** — a cursor over the
+> squares (D-pad/stick), **Cross** to select/move, **Circle** to cancel, and a gamepad promotion
+> menu — driving the engine's full rules (castling, en passant, promotion, check / checkmate /
+> stalemate). Audio (**M3**) follows — see the roadmap.
 
 ## Porting approach
 
@@ -22,7 +24,7 @@ ray-chess is a desktop raylib project; only the I/O rind is rewritten, the engin
 
 | ray-chess (desktop) | PS3 port |
 |---------------------|----------|
-| mouse: click a square (`GetMousePosition`) | **M2:** gamepad cursor (D-pad/stick, Cross=confirm, Circle=cancel) |
+| mouse: click a square (`GetMousePosition`) | gamepad cursor (D-pad/stick, Cross=confirm, Circle=cancel) |
 | `std::filesystem` scan of `assets/textures` + `assets/sounds` | PNG/WAV embedded via `bin2o`, loaded from memory |
 | `LoadImage` from a file path | `LoadImageFromMemory(".png", …)` on the embedded bytes |
 | raylib `LoadSound`/`PlaySound` | **M3:** the real `click`/`clickCancel` WAVs via the MikMod module |
@@ -63,7 +65,9 @@ Via the Docker helper the outputs are named after the `/src` mount: `src.elf` / 
 - **RPCS3:** boot `ps3-ray-chess.self` directly, or *File → Install .pkg* → pick the `.pkg` → launch **RayChess**.
 - **Real PS3 (HEN/CFW):** install the `.pkg` from the XMB, or `ps3load` the `.self`.
 
-Press **Start** to quit to the XMB.
+**Controls:** D-pad or left stick moves the cursor over the squares · **Cross** selects a piece / plays
+the move on the cursor square · **Circle** cancels the selection · during a promotion, **Left/Right**
+pick Queen/Rook/Bishop/Knight and **Cross** confirms · **Start** quits to the XMB.
 
 ## Project structure
 
@@ -87,8 +91,10 @@ ps3-ray-chess/
 
 - **M1 — pipeline** *(done)*: scaffold on the raylib toolchain; the 20 PNGs embedded via `bin2o`
   and loaded from memory; the board + all pieces render centered at 1280×720; boots clean on RPCS3.
-- **M2 — gamepad play**: a cursor over the squares (D-pad/stick), **Cross** to select/move, **Circle**
-  to cancel, and a gamepad promotion menu — driving the engine's existing rules to a fully playable game.
+- **M2 — gamepad play** *(done)*: a cursor over the squares (D-pad/stick), **Cross** to select/move,
+  **Circle** to cancel, and a gamepad promotion menu — driving the engine's existing rules (castling,
+  en passant, promotion, check / checkmate / stalemate) to a fully playable game. Edge-triggered
+  cursor movement; the cursor + selected square are highlighted.
 - **M3 — audio + polish**: the original `click` / `clickCancel` SFX via the MikMod module
   (`load_wav` from the embedded bytes), endgame polish, and an optional debug/FPS overlay.
 

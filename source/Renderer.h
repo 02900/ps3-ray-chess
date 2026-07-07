@@ -17,6 +17,11 @@ public:
     static void RenderEndScreen(GAME_STATE state);
     static void ChangeMouseCursor(const Board& board, const std::vector<Move>& possibleMoves, PIECE_COLOR turn, bool inPromotion);
 
+    // PS3 gamepad affordances (replace the desktop mouse cursor).
+    static void RenderCursor(const Position& cursor);       // outline the hovered cell
+    static void RenderSelection(const Position& position);  // highlight the selected piece's cell
+    static void RenderPromotionCursor(int choice);          // outline the chosen promotion option
+
 private:
     static std::string GetTextureNameFromMoveType(MOVE_TYPE moveType);
     static Color GetShadeColor(PIECE_COLOR color);

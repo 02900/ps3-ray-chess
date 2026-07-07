@@ -46,6 +46,7 @@ public:
 private:
     void LoadTextures();
 
+    void UpdateCursor();       // move the board cursor from the D-pad / left stick
     void HandleInput();
     void HandleInputPromotion();
     Move* GetMoveAtPosition(const Position& position);
@@ -68,6 +69,13 @@ private:
     // Selected piece/possible moves state.
     Piece* selectedPiece = nullptr;
     std::map<Piece*, std::vector<Move>> possibleMovesPerPiece;
+
+    // Gamepad input state (replaces the desktop mouse). The cursor is a board cell;
+    // dirPrev holds the previous frame's up/down/left/right so movement is
+    // edge-triggered (one square per press). promotionChoice indexes Q/R/B/N.
+    Position cursor = {6, 4};
+    bool dirPrev[4] = {false, false, false, false};
+    int promotionChoice = 0;
 
     // Game information (current round and time).
     int round = 1;
