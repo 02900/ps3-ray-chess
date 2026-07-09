@@ -69,6 +69,14 @@ public:
 private:
     void LoadTextures();
 
+#ifdef NETTEST
+    // E2E test harness: drain one queued TCP command per frame and dispatch it.
+    void PollTestServer();
+    std::string HandleTestCommand(const std::string& cmd);
+    std::string TestStateString();        // one-line screen/turn/state summary
+    std::string TestBoardString() const;  // FEN-like piece dump (classic)
+#endif
+
     void UpdateCursor();       // move the board cursor from the D-pad / left stick
     void HandleInput();
     void HandleInputPromotion();

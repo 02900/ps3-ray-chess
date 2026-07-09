@@ -30,6 +30,16 @@ TARGET		:=	$(notdir $(CURDIR))
 BUILD		:=	build
 SOURCES		:=	source source/pieces source/four
 DATA		:=	data
+
+#---------------------------------------------------------------------------------
+# End-to-end test harness (opt-in): build with `NETTEST=1 make` to compile the
+# source/nettest TCP command server and define -DNETTEST. Default builds are
+# unchanged and open no port. -lnet is already linked below.
+#---------------------------------------------------------------------------------
+ifneq ($(strip $(NETTEST)),)
+SOURCES		+=	source/nettest
+NETDEF		:=	-DNETTEST
+endif
 INCLUDES	:=	include
 PKGFILES	:=	pkgfiles
 
@@ -47,8 +57,8 @@ LIBS		:=	-lraylib -lEGL -lGL \
 #---------------------------------------------------------------------------------
 # Compiler flags. -D__RSX__ is required by the RSXGL headers.
 #---------------------------------------------------------------------------------
-CFLAGS		=	-O2 -Wall -mcpu=cell -std=gnu99 -D__RSX__ $(MACHDEP) $(INCLUDE)
-CXXFLAGS	=	-O2 -Wall -mcpu=cell -std=gnu++17 -D__RSX__ $(MACHDEP) $(INCLUDE)
+CFLAGS		=	-O2 -Wall -mcpu=cell -std=gnu99 -D__RSX__ $(NETDEF) $(MACHDEP) $(INCLUDE)
+CXXFLAGS	=	-O2 -Wall -mcpu=cell -std=gnu++17 -D__RSX__ $(NETDEF) $(MACHDEP) $(INCLUDE)
 LDFLAGS		=	$(MACHDEP) -Wl,-Map,$(notdir $@).map
 
 #---------------------------------------------------------------------------------

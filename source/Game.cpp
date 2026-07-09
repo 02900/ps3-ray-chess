@@ -6,6 +6,7 @@
 #include "settings.h"
 #include "savegame.h"
 #include "compat.h"  // compat::to_string (PS3 newlib lacks std::to_string)
+#include "nettest/nettest.h"  // e2e TCP test server (only under -DNETTEST)
 
 #include <cstring>   // memcpy for game-state (de)serialization
 #include <cctype>    // toupper for algebraic notation
@@ -102,8 +103,16 @@ void Game::Run() {
     camera.rotation = 0.0f;
     camera.zoom = 1.0f;
 
+#ifdef NETTEST
+    nettest::Start();  // bring up the TCP command server (opt-in test build)
+#endif
+
     while (!WindowShouldClose()){
         audio_update();  // drive MikMod's software mixer
+
+#ifdef NETTEST
+        PollTestServer();  // apply one queued test command before this frame's input
+#endif
 
         // Per-screen input.
         switch (screen) {
@@ -277,6 +286,10 @@ void Game::Run() {
         }
         EndMode2D();
         EndDrawing();
+
+#ifdef NETTEST
+        nettest::SynthClear();  // a synthetic press lasts exactly one frame
+#endif
     }
 }
 
@@ -335,12 +348,18 @@ bool Game::fourPadActive(int i) const {
 }
 
 bool Game::fourPressed(int button) const {
+#ifdef NETTEST
+    if (nettest::SynthPressed(button)) return true;
+#endif
     for (int i = 0; i < 4; i++)
         if (fourPadActive(i) && IsGamepadButtonPressed(i, button)) return true;
     return false;
 }
 
 bool Game::fourDown(int button) const {
+#ifdef NETTEST
+    if (nettest::SynthDown(button)) return true;
+#endif
     for (int i = 0; i < 4; i++)
         if (fourPadActive(i) && IsGamepadButtonDown(i, button)) return true;
     return false;
@@ -850,6 +869,9 @@ bool Game::padCountsForTurn(int i) const {
 }
 
 bool Game::padPressed(int button, bool turnOnly) const {
+#ifdef NETTEST
+    if (nettest::SynthPressed(button)) return true;  // harness drives any side
+#endif
     for (int i = 0; i < 4; i++) {
         bool include = turnOnly ? padCountsForTurn(i) : IsGamepadAvailable(i);
         if (include && IsGamepadButtonPressed(i, button)) return true;
@@ -858,6 +880,9 @@ bool Game::padPressed(int button, bool turnOnly) const {
 }
 
 bool Game::padDown(int button, bool turnOnly) const {
+#ifdef NETTEST
+    if (nettest::SynthDown(button)) return true;
+#endif
     for (int i = 0; i < 4; i++) {
         bool include = turnOnly ? padCountsForTurn(i) : IsGamepadAvailable(i);
         if (include && IsGamepadButtonDown(i, button)) return true;
@@ -1331,4 +1356,156 @@ void Game::HistoryForward() {
         RestoreSnapshot(history[historyIndex]);
     }
 }
+
+// --- E2E test harness (TCP command server) ---------------------------------
+#ifdef NETTEST
+
+namespace {
+
+// Split a command line into whitespace-separated tokens.
+std::vector<std::string> TestTokens(const std::string& s) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : s) {
+        if (c == ' ' || c == '\t') { if (!cur.empty()) { out.push_back(cur); cur.clear(); } }
+        else cur += c;
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+// Map a button name to its raylib GAMEPAD_BUTTON_* id (-1 = unknown).
+int TestButtonId(const std::string& n) {
+    if (n == "cross"  || n == "x") return GAMEPAD_BUTTON_RIGHT_FACE_DOWN;
+    if (n == "circle" || n == "o") return GAMEPAD_BUTTON_RIGHT_FACE_RIGHT;
+    if (n == "triangle")           return GAMEPAD_BUTTON_RIGHT_FACE_UP;
+    if (n == "square")             return GAMEPAD_BUTTON_RIGHT_FACE_LEFT;
+    if (n == "up")                 return GAMEPAD_BUTTON_LEFT_FACE_UP;
+    if (n == "down")               return GAMEPAD_BUTTON_LEFT_FACE_DOWN;
+    if (n == "left")               return GAMEPAD_BUTTON_LEFT_FACE_LEFT;
+    if (n == "right")              return GAMEPAD_BUTTON_LEFT_FACE_RIGHT;
+    if (n == "start")              return GAMEPAD_BUTTON_MIDDLE_RIGHT;
+    if (n == "select")             return GAMEPAD_BUTTON_MIDDLE_LEFT;
+    if (n == "l1")                 return GAMEPAD_BUTTON_LEFT_TRIGGER_1;
+    if (n == "r1")                 return GAMEPAD_BUTTON_RIGHT_TRIGGER_1;
+    return -1;
+}
+
+const char* TestScreenName(SCREEN s) {
+    switch (s) {
+        case SCR_MAIN:        return "main";
+        case SCR_MODESEL:     return "modesel";
+        case SCR_ASSIGN:      return "assign";
+        case SCR_FOUR_ASSIGN: return "four_assign";
+        case SCR_OPTIONS:     return "options";
+        case SCR_PAUSE:       return "pause";
+        case SCR_GAME:        return "game";
+        case SCR_SAVEBUSY:    return "savebusy";
+    }
+    return "?";
+}
+
+const char* TestStateName(GAME_STATE s) {
+    switch (s) {
+        case S_RUNNING:    return "running";
+        case S_PROMOTION:  return "promotion";
+        case S_WHITE_WINS: return "white_wins";
+        case S_BLACK_WINS: return "black_wins";
+        case S_STALEMATE:  return "stalemate";
+    }
+    return "?";
+}
+
+const char* FourColorName(PColor c) {
+    switch (c) {
+        case P_RED:    return "red";
+        case P_BLUE:   return "blue";
+        case P_YELLOW: return "yellow";
+        case P_GREEN:  return "green";
+        default:       return "none";
+    }
+}
+
+}  // namespace
+
+// One-line summary of the live state, e.g.
+//   screen=game mode=classic turn=white state=running round=3 check=0 gameover=0
+std::string Game::TestStateString() {
+    std::string s = "screen=";
+    s += TestScreenName(screen);
+
+    if (gameMode == MODE_CLASSIC || !four) {
+        s += " mode=classic";
+        s += std::string(" turn=") + (turn == C_WHITE ? "white" : "black");
+        s += std::string(" state=") + TestStateName(state);
+        s += " round=" + compat::to_string(round);
+        s += std::string(" check=") + (board.IsInCheck(turn) ? "1" : "0");
+        bool over = (state == S_WHITE_WINS || state == S_BLACK_WINS || state == S_STALEMATE);
+        s += std::string(" gameover=") + (over ? "1" : "0");
+    } else {
+        s += std::string(" mode=") + (gameMode == MODE_4P_FFA ? "ffa" : "teams");
+        s += std::string(" turn=") + FourColorName(four->TurnColor());
+        s += std::string(" gameover=") + (four->IsGameOver() ? "1" : "0");
+    }
+    return s;
+}
+
+// FEN-like dump of the classic 8x8 board (rank 8 first, ranks joined by '/').
+// White pieces uppercase, black lowercase, empty runs collapsed to a digit.
+std::string Game::TestBoardString() const {
+    std::string out;
+    for (int i = 0; i < 8; i++) {
+        int empties = 0;
+        for (int j = 0; j < 8; j++) {
+            Piece* p = board.At(Position{i, j});
+            if (!p) { empties++; continue; }
+            if (empties) { out += compat::to_string(empties); empties = 0; }
+            std::string c = Piece::GetPieceCharacterByType(p->type);
+            char ch = c.empty() ? '?' : c[0];
+            out += (p->color == C_WHITE) ? (char) toupper(ch) : ch;
+        }
+        if (empties) out += compat::to_string(empties);
+        if (i < 7) out += '/';
+    }
+    return out;
+}
+
+// Parse and execute one command; return the single-line reply (no trailing '\n').
+// N1 vocabulary: ping / state / board / press <button> / help.
+std::string Game::HandleTestCommand(const std::string& cmd) {
+    std::vector<std::string> t = TestTokens(cmd);
+    if (t.empty()) return "err empty";
+    const std::string& op = t[0];
+
+    if (op == "ping")  return "pong";
+    if (op == "state") return TestStateString();
+    if (op == "board") {
+        if (gameMode == MODE_CLASSIC || !four) return TestBoardString();
+        return "err board_4p_not_implemented";  // 4PC dump lands in N2
+    }
+    if (op == "press") {
+        if (t.size() < 2) return "err press_needs_button";
+        int b = TestButtonId(t[1]);
+        if (b < 0) return "err unknown_button " + t[1];
+        nettest::SynthPress(b);
+        return "ok";
+    }
+    if (op == "help")
+        return "cmds: ping state board press<btn> "
+               "(btns: cross circle triangle square up down left right start select l1 r1)";
+
+    return "err unknown " + op;
+}
+
+// Called once per frame from Run(): apply at most one queued command. `press`
+// dispatches here (top of the frame) so its synthetic button is live for this
+// frame's per-screen input handler.
+void Game::PollTestServer() {
+    std::string cmd;
+    if (nettest::PopCommand(cmd)) {
+        nettest::PostReply(HandleTestCommand(cmd));
+    }
+}
+
+#endif  // NETTEST
 

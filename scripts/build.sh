@@ -36,6 +36,14 @@ case "${1:-build}" in
   *)          echo "Unknown target '${1}'. Use: build | clean | pkg" >&2; exit 1 ;;
 esac
 
+# Forward the opt-in test-harness flag into the container so the Makefile compiles
+# the source/nettest TCP server (see scripts/build-test.sh).
+ENVFLAGS=()
+if [ -n "${NETTEST:-}" ]; then
+  ENVFLAGS+=(-e "NETTEST=${NETTEST}")
+  echo ">> NETTEST=${NETTEST} (building the e2e test server)"
+fi
+
 echo ">> Building with $IMAGE (make $TARGET)"
 
 # The PPU gcc 7.2 toolchain occasionally segfaults (cc1 / collect2) when run under
@@ -43,7 +51,7 @@ echo ">> Building with $IMAGE (make $TARGET)"
 # unrelated to the code, so retry a few times before giving up.
 attempts=3
 for try in $(seq 1 "$attempts"); do
-  if docker run --rm -v "$REPO_ROOT":/src -w /src "$IMAGE" make $TARGET; then
+  if docker run --rm -v "$REPO_ROOT":/src -w /src ${ENVFLAGS[@]+"${ENVFLAGS[@]}"} "$IMAGE" make $TARGET; then
     exit 0
   fi
   echo ">> build attempt $try/$attempts failed" >&2
