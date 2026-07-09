@@ -326,6 +326,11 @@ void Game::HandleGameFrame() {
         if (dir[3] && !dirPrev[3]) dj += 1;
         if (di || dj) four->MoveCursor(di, dj);
         for (int k = 0; k < 4; k++) dirPrev[k] = dir[k];
+
+        // Cross selects / moves; Circle cancels. (Any pad drives the current player
+        // for now; per-colour pad assignment is M2b.)
+        if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false))  four->Select();
+        if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, false)) four->Cancel();
         return;
     }
 

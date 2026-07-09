@@ -59,6 +59,224 @@ void FourGame::MoveCursor(int di, int dj) {
     if (FourBoard::Playable(ni, nj)) { cursor.i = ni; cursor.j = nj; }
 }
 
+// ---- move engine ----------------------------------------------------------
+
+int FourGame::TeamOf(PColor c) const {
+    if (mode == FOUR_TEAMS) return (c == P_RED || c == P_YELLOW) ? 0 : 1;
+    return (int) c;   // FFA: everyone is their own team
+}
+
+bool FourGame::IsEnemy(PColor a, PColor b) const {
+    if (a == P_NONE || b == P_NONE || a == b) return false;
+    return TeamOf(a) != TeamOf(b);
+}
+
+void FourGame::ForwardDir(PColor c, int& di, int& dj) const {
+    di = dj = 0;
+    switch (c) {
+        case P_RED:    di = -1; break;   // bottom -> up
+        case P_YELLOW: di = +1; break;   // top -> down
+        case P_BLUE:   dj = +1; break;   // left -> right
+        case P_GREEN:  dj = -1; break;   // right -> left
+        default: break;
+    }
+}
+
+bool FourGame::IsPromoSquare(PColor c, int i, int j) const {
+    // FFA promotes on the 8th rank from each side; Teams on the 11th.
+    int rank = (mode == FOUR_FFA) ? 8 : 11;
+    switch (c) {
+        case P_RED:    return i == 14 - rank;
+        case P_YELLOW: return i == rank - 1;
+        case P_BLUE:   return j == rank - 1;
+        case P_GREEN:  return j == 14 - rank;
+        default: return false;
+    }
+}
+
+static const int ROOK_DIR[4][2]   = {{-1,0},{1,0},{0,-1},{0,1}};
+static const int BISHOP_DIR[4][2] = {{-1,-1},{-1,1},{1,-1},{1,1}};
+static const int KNIGHT_OFF[8][2] = {{-2,-1},{-2,1},{-1,-2},{-1,2},{1,-2},{1,2},{2,-1},{2,1}};
+static const int KING_OFF[8][2]   = {{-1,-1},{-1,0},{-1,1},{0,-1},{0,1},{1,-1},{1,0},{1,1}};
+
+void FourGame::GenMoves(int i, int j, std::vector<Move4>& out) const {
+    const Piece4& p = board.At(i, j);
+    if (!p.present) return;
+    PColor me = p.color;
+
+    auto rays = [&](const int dir[][2], int n) {
+        for (int d = 0; d < n; d++) {
+            int ti = i + dir[d][0], tj = j + dir[d][1];
+            while (FourBoard::Playable(ti, tj)) {
+                const Piece4& t = board.At(ti, tj);
+                if (!t.present) { out.push_back({ti, tj, MK_WALK}); }
+                else { if (IsEnemy(me, t.color) && t.type != KING) out.push_back({ti, tj, MK_CAPTURE}); break; }
+                ti += dir[d][0]; tj += dir[d][1];
+            }
+        }
+    };
+    auto steps = [&](const int off[][2], int n) {
+        for (int d = 0; d < n; d++) {
+            int ti = i + off[d][0], tj = j + off[d][1];
+            if (!FourBoard::Playable(ti, tj)) continue;
+            const Piece4& t = board.At(ti, tj);
+            if (!t.present) out.push_back({ti, tj, MK_WALK});
+            else if (IsEnemy(me, t.color) && t.type != KING) out.push_back({ti, tj, MK_CAPTURE});
+        }
+    };
+
+    switch (p.type) {
+        case ROOK:   rays(ROOK_DIR, 4); break;
+        case BISHOP: rays(BISHOP_DIR, 4); break;
+        case QUEEN:  rays(ROOK_DIR, 4); rays(BISHOP_DIR, 4); break;
+        case KNIGHT: steps(KNIGHT_OFF, 8); break;
+        case KING:   steps(KING_OFF, 8); break;   // castling in M2b
+        case PEON: {
+            int di, dj; ForwardDir(me, di, dj);
+            int oi = i + di, oj = j + dj;
+            if (FourBoard::Playable(oi, oj) && !board.At(oi, oj).present) {
+                out.push_back({oi, oj, IsPromoSquare(me, oi, oj) ? MK_PROMO : MK_WALK});
+                int ti = i + 2 * di, tj = j + 2 * dj;
+                if (!p.hasMoved && FourBoard::Playable(ti, tj) && !board.At(ti, tj).present) {
+                    out.push_back({ti, tj, MK_DOUBLE});
+                }
+            }
+            // Diagonal captures: forward ± perpendicular.
+            int p1i, p1j, p2i, p2j;
+            if (di != 0) { p1i = 0; p1j = -1; p2i = 0; p2j = 1; }
+            else         { p1i = -1; p1j = 0; p2i = 1; p2j = 0; }
+            int diag[2][2] = { { di + p1i, dj + p1j }, { di + p2i, dj + p2j } };
+            for (int d = 0; d < 2; d++) {
+                int ti = i + diag[d][0], tj = j + diag[d][1];
+                if (!FourBoard::Playable(ti, tj)) continue;
+                const Piece4& t = board.At(ti, tj);
+                if (t.present && IsEnemy(me, t.color) && t.type != KING) {
+                    out.push_back({ti, tj, IsPromoSquare(me, ti, tj) ? MK_PROMO : MK_CAPTURE});
+                }
+            }
+            break;
+        }
+    }
+}
+
+void FourGame::GenAttackSquares(const FourBoard& b, int i, int j, std::vector<Position>& out) const {
+    const Piece4& p = b.At(i, j);
+    if (!p.present) return;
+
+    auto rays = [&](const int dir[][2], int n) {
+        for (int d = 0; d < n; d++) {
+            int ti = i + dir[d][0], tj = j + dir[d][1];
+            while (FourBoard::Playable(ti, tj)) {
+                out.push_back({ti, tj});
+                if (b.At(ti, tj).present) break;   // first blocker is attacked
+                ti += dir[d][0]; tj += dir[d][1];
+            }
+        }
+    };
+    auto steps = [&](const int off[][2], int n) {
+        for (int d = 0; d < n; d++) {
+            int ti = i + off[d][0], tj = j + off[d][1];
+            if (FourBoard::Playable(ti, tj)) out.push_back({ti, tj});
+        }
+    };
+
+    switch (p.type) {
+        case ROOK:   rays(ROOK_DIR, 4); break;
+        case BISHOP: rays(BISHOP_DIR, 4); break;
+        case QUEEN:  rays(ROOK_DIR, 4); rays(BISHOP_DIR, 4); break;
+        case KNIGHT: steps(KNIGHT_OFF, 8); break;
+        case KING:   steps(KING_OFF, 8); break;
+        case PEON: {
+            int di, dj; ForwardDir(p.color, di, dj);
+            int p1i, p1j, p2i, p2j;
+            if (di != 0) { p1i = 0; p1j = -1; p2i = 0; p2j = 1; }
+            else         { p1i = -1; p1j = 0; p2i = 1; p2j = 0; }
+            int d1i = i + di + p1i, d1j = j + dj + p1j;
+            int d2i = i + di + p2i, d2j = j + dj + p2j;
+            if (FourBoard::Playable(d1i, d1j)) out.push_back({d1i, d1j});
+            if (FourBoard::Playable(d2i, d2j)) out.push_back({d2i, d2j});
+            break;
+        }
+    }
+}
+
+bool FourGame::KingAttacked(const FourBoard& b, PColor c) const {
+    int ki = -1, kj = -1;
+    for (int i = 0; i < FourBoard::N && ki < 0; i++)
+        for (int j = 0; j < FourBoard::N; j++) {
+            const Piece4& p = b.At(i, j);
+            if (p.present && p.color == c && p.type == KING) { ki = i; kj = j; break; }
+        }
+    if (ki < 0) return false;
+
+    std::vector<Position> atk;
+    for (int i = 0; i < FourBoard::N; i++)
+        for (int j = 0; j < FourBoard::N; j++) {
+            const Piece4& p = b.At(i, j);
+            if (!p.present || !p.alive || !IsEnemy(c, p.color)) continue;
+            atk.clear();
+            GenAttackSquares(b, i, j, atk);
+            for (const Position& s : atk) if (s.i == ki && s.j == kj) return true;
+        }
+    return false;
+}
+
+void FourGame::LegalMoves(int i, int j, std::vector<Move4>& out) const {
+    std::vector<Move4> pseudo;
+    GenMoves(i, j, pseudo);
+    PColor me = board.At(i, j).color;
+
+    for (const Move4& m : pseudo) {
+        FourBoard copy = board;   // Piece4 is POD, trivially copyable
+        Piece4 mover = copy.At(i, j);
+        copy.At(i, j) = { false, P_NONE, PEON, false, false };
+        if (m.kind == MK_PROMO) mover.type = QUEEN;
+        mover.hasMoved = true;
+        copy.At(m.i, m.j) = mover;   // captures by overwrite
+        if (!KingAttacked(copy, me)) out.push_back(m);
+    }
+}
+
+void FourGame::ApplyMove(int fi, int fj, const Move4& m) {
+    Piece4 mover = board.At(fi, fj);
+    board.At(fi, fj) = { false, P_NONE, PEON, false, false };
+    if (m.kind == MK_PROMO) mover.type = QUEEN;   // auto-queen (choice menu is M2b)
+    mover.hasMoved = true;
+    board.At(m.i, m.j) = mover;
+    NextTurn();
+}
+
+void FourGame::NextTurn() {
+    current = (current + 1) % 4;   // eliminated-player skipping is M3
+}
+
+void FourGame::Select() {
+    const Piece4& p = board.At(cursor.i, cursor.j);
+    if (hasSelected) {
+        for (const Move4& m : selMoves) {
+            if (m.i == cursor.i && m.j == cursor.j) {
+                ApplyMove(selected.i, selected.j, m);
+                hasSelected = false; selMoves.clear();
+                return;
+            }
+        }
+        // Not a legal target: reselect an own piece, else clear.
+        if (p.present && p.color == CurrentColor()) {
+            selected = cursor; selMoves.clear(); LegalMoves(cursor.i, cursor.j, selMoves);
+        } else {
+            hasSelected = false; selMoves.clear();
+        }
+    } else if (p.present && p.color == CurrentColor()) {
+        selected = cursor; hasSelected = true;
+        selMoves.clear(); LegalMoves(cursor.i, cursor.j, selMoves);
+    }
+}
+
+void FourGame::Cancel() {
+    hasSelected = false;
+    selMoves.clear();
+}
+
 // ---- rendering ------------------------------------------------------------
 
 void FourGame::Render(const std::map<std::string, Texture>& textures, bool active) const {
@@ -69,6 +287,12 @@ void FourGame::Render(const std::map<std::string, Texture>& textures, bool activ
             int x, y; CellOrigin(i, j, x, y);
             DrawRectangle(x, y, CELL, CELL, ((i + j) % 2 == 0) ? LIGHT_SQ : DARK_SQ);
         }
+    }
+
+    // Selected piece's square, under the pieces.
+    if (active && hasSelected) {
+        int x, y; CellOrigin(selected.i, selected.j, x, y);
+        DrawRectangle(x, y, CELL, CELL, Color{ 80, 160, 255, 120 });
     }
 
     // Pieces: tint the white silhouettes per player colour (grey when dead).
@@ -85,6 +309,19 @@ void FourGame::Render(const std::map<std::string, Texture>& textures, bool activ
             Rectangle dst = { (float) x, (float) y, (float) CELL, (float) CELL };
             DrawTexturePro(it->second, src, dst, (Vector2){ 0, 0 }, 0.0f,
                            p.alive ? TintFor(p.color) : DEAD_TINT);
+        }
+    }
+
+    // Legal-move markers for the selected piece (on top of the pieces).
+    if (active && hasSelected) {
+        for (const Move4& m : selMoves) {
+            int x, y; CellOrigin(m.i, m.j, x, y);
+            if (m.kind == MK_CAPTURE || m.kind == MK_PROMO) {
+                Rectangle r = { (float) x, (float) y, (float) CELL, (float) CELL };
+                DrawRectangleLinesEx(r, 3, Color{ 40, 40, 40, 160 });
+            } else {
+                DrawCircle(x + CELL / 2, y + CELL / 2, 7, Color{ 40, 40, 40, 150 });
+            }
         }
     }
 
