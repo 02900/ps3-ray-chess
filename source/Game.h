@@ -20,11 +20,12 @@ enum GAME_STATE {
 
 // Top-level screens. The board always renders as a backdrop; menus overlay it.
 enum SCREEN {
-    SCR_MAIN,     // Nueva Partida / Reanudar / Opciones / Salir
+    SCR_MAIN,     // Nueva Partida / Reanudar / Cargar / Opciones / Salir
     SCR_ASSIGN,   // controller-to-side selection
     SCR_OPTIONS,  // Ritmo / Jugador 1 / Auto-invertir
     SCR_PAUSE,    // in-game pause menu (START)
-    SCR_GAME      // playing
+    SCR_GAME,     // playing
+    SCR_SAVEBUSY  // the XMB Saved Data Utility dialog is running (on a thread)
 };
 
 class Game {
@@ -82,6 +83,13 @@ private:
     void HandlePauseMenu();
     void HandleOptionsMenu();
     void HandleAssignMenu();
+    void HandleSaveBusy();      // poll the savedata thread; apply a loaded game
+
+    // XMB Saved Data Utility (save/load a full game, incl. move history).
+    void StartSaveGame();
+    void StartLoadGame();
+    std::vector<unsigned char> SerializeGame() const;
+    bool DeserializeGame(const unsigned char* data, unsigned size);
 
     void CalculateAllPossibleMovements();
     void CheckForEndOfGame();
@@ -150,6 +158,10 @@ private:
     bool hasGame = false;           // enables "Reanudar Partida"
     bool assignReturnsToGame = false; // Cambiar equipo (true) vs Nueva Partida (false)
     bool quitRequested = false;     // set by the main menu's "Salir"
+
+    // Save/load (XMB Saved Data Utility).
+    bool saveBusyIsLoad = false;    // the running dialog is a load (vs save)
+    SCREEN saveReturnScreen = SCR_MAIN; // where to return on cancel/fail
 
     // View.
     bool flipped = false;       // black at the bottom when true

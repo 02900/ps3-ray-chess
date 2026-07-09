@@ -66,12 +66,18 @@ Via the Docker helper the outputs are named after the `/src` mount: `src.elf` / 
 - **RPCS3:** boot `ps3-ray-chess.self` directly, or *File → Install .pkg* → pick the `.pkg` → launch **RayChess**.
 - **Real PS3 (HEN/CFW):** install the `.pkg` from the XMB, or `ps3load` the `.self`.
 
-**Menus.** The game opens on a **main menu** — *Nueva Partida*, *Reanudar Partida*, *Opciones*,
-*Salir*. In-game, **Start** opens the **pause menu** (*Reanudar juego en curso*, *Cambiar equipo*,
-*Auto-invertir*, *Reiniciar partida*, *Salir a menú principal*). **Select does nothing.** Quit to the
-XMB from the main menu's **Salir**. *Opciones* holds the Fischer time control (*Sin reloj / 3|2 / 5|3
-/ 10|5*; running out of time loses), which colour is **Jugador 1** (info-bar label), and **auto-flip**.
-Menu navigation: D-pad up/down move, left/right change a value, **Cross** activates, **Circle** backs out.
+**Menus.** The game opens on a **main menu** — *Nueva Partida*, *Reanudar Partida*, *Cargar partida*,
+*Opciones*, *Salir*. In-game, **Start** opens the **pause menu** (*Reanudar juego en curso*, *Guardar
+partida*, *Cargar partida*, *Cambiar equipo*, *Auto-invertir*, *Reiniciar partida*, *Salir a menú
+principal*). **Select does nothing.** Quit to the XMB from the main menu's **Salir**. *Opciones* holds
+the Fischer time control (*Sin reloj / 3|2 / 5|3 / 10|5*; running out of time loses), which colour is
+**Jugador 1** (info-bar label), and **auto-flip**. Menu navigation: D-pad up/down move, left/right
+change a value, **Cross** activates, **Circle** backs out.
+
+**Save / load games (XMB Saved Data Utility).** *Guardar partida* / *Cargar partida* use the PS3's
+own **Saved Data Utility** — the OS slot picker with icon and title/subtitle/detail, visible in the
+console's *Saved Data* manager. A save captures the **full state and complete move history**, so a
+game resumes exactly (L1/R1 still work). Settings (*Opciones*) are saved separately and silently.
 
 **Multi-controller.** *Nueva Partida* (and *Cambiar equipo* in the pause menu) opens a controller
 screen listing the **powered-on pads** (up to 4). Assign each pad to **Blancas** or **Negras** — on a
@@ -129,9 +135,12 @@ ps3-ray-chess/
   controllers**: assign each pad to a side (only that side's pads move it; a side with no pad is
   driven by any pad, so one controller still runs the whole game).
 - **Settings persistence** *(done)*: *Opciones* (time control, Jugador 1 colour, auto-flip) are saved
-  to `/dev_hdd0/RAYCHESS/settings.bin` and restored on launch. This PSL1GHT build ships no linkable
-  `sysFs*` wrappers, so `source/settings.c` calls the lv2 filesystem **syscalls** directly (open/read/
-  write/close/mkdir), the same way `sysinfo.c` reads RAM.
+  to `/dev_hdd0/RAYCHESS/settings.bin` and restored on launch — `source/settings.c` writes it via the
+  lv2 filesystem syscalls (silent, no dialog).
+- **Save / load games** *(done)*: *Guardar partida* / *Cargar partida* via the XMB **Saved Data
+  Utility** (`source/savegame.c` — `sysSaveListSave2/Load2` on a background thread, memory container,
+  list/status/file callbacks, ICON0). A save serializes the full state + move history
+  (`Game::SerializeGame`), so a game resumes exactly. The save appears in the PS3's *Saved Data* manager.
 
 ## Credits & license
 

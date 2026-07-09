@@ -4,7 +4,10 @@
 #include "Renderer.h"
 #include "audio.h"
 #include "settings.h"
+#include "savegame.h"
 #include "compat.h"  // compat::to_string (PS3 newlib lacks std::to_string)
+
+#include <cstring>   // memcpy for game-state (de)serialization
 #include "pieces/Queen.h"
 #include "pieces/Knight.h"
 #include "pieces/Bishop.h"
@@ -54,6 +57,7 @@ extern "C" {
     DECL_PNG(wp) DECL_PNG(wr) DECL_PNG(wn) DECL_PNG(wb) DECL_PNG(wq) DECL_PNG(wk)
     DECL_PNG(bp) DECL_PNG(br) DECL_PNG(bn) DECL_PNG(bb) DECL_PNG(bq) DECL_PNG(bk)
     DECL_PNG(move) DECL_PNG(castling) DECL_PNG(enpassant) DECL_PNG(promotion)
+    DECL_PNG(saveicon)   // ICON0 for the XMB save (not a board texture)
     #undef DECL_PNG
 }
 
@@ -102,11 +106,12 @@ void Game::Run() {
 
         // Per-screen input.
         switch (screen) {
-            case SCREEN::SCR_GAME:    HandleGameFrame();  break;
-            case SCREEN::SCR_MAIN:    HandleMainMenu();    break;
-            case SCREEN::SCR_PAUSE:   HandlePauseMenu();   break;
-            case SCREEN::SCR_OPTIONS: HandleOptionsMenu(); break;
-            case SCREEN::SCR_ASSIGN:  HandleAssignMenu();  break;
+            case SCREEN::SCR_GAME:     HandleGameFrame();  break;
+            case SCREEN::SCR_MAIN:     HandleMainMenu();    break;
+            case SCREEN::SCR_PAUSE:    HandlePauseMenu();   break;
+            case SCREEN::SCR_OPTIONS:  HandleOptionsMenu(); break;
+            case SCREEN::SCR_ASSIGN:   HandleAssignMenu();  break;
+            case SCREEN::SCR_SAVEBUSY: HandleSaveBusy();    break;
         }
         if (quitRequested) break;  // main-menu "Salir"
 
@@ -160,6 +165,7 @@ void Game::Run() {
                 std::vector<std::string> lines = {
                     "Nueva Partida",
                     std::string("Reanudar Partida") + (hasGame ? "" : " (sin partida)"),
+                    "Cargar partida",
                     "Opciones",
                     "Salir",
                 };
@@ -167,12 +173,18 @@ void Game::Run() {
             } else if (screen == SCREEN::SCR_PAUSE) {
                 std::vector<std::string> lines = {
                     "Reanudar juego en curso",
+                    "Guardar partida",
+                    "Cargar partida",
                     "Cambiar equipo",
                     "Auto-invertir: " + std::string(autoFlip ? "Si" : "No"),
                     "Reiniciar partida",
                     "Salir a menu principal",
                 };
                 Renderer::RenderMenu("Pausa", lines, menuIndex, "");
+            } else if (screen == SCREEN::SCR_SAVEBUSY) {
+                std::vector<std::string> lines;  // no options; the XMB dialog owns input
+                Renderer::RenderMenu(saveBusyIsLoad ? "Cargando partida..." : "Guardando partida...",
+                                     lines, -1, "Segui las instrucciones del sistema.");
             } else if (screen == SCREEN::SCR_OPTIONS) {
                 std::vector<std::string> lines = {
                     "Ritmo: " + std::string(TIME_CONTROLS[timeControlIndex].label),
@@ -233,7 +245,7 @@ void Game::HandleGameFrame() {
 
 // Shared menu navigation: returns the row delta / actions via out-params.
 void Game::HandleMainMenu() {
-    const int COUNT = 4;
+    const int COUNT = 5;
     if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_UP, false))   menuIndex = (menuIndex + COUNT - 1) % COUNT;
     if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN, false)) menuIndex = (menuIndex + 1) % COUNT;
 
@@ -244,7 +256,9 @@ void Game::HandleMainMenu() {
             menuIndex = 0;
         } else if (menuIndex == 1) {          // Reanudar Partida
             if (hasGame) { screen = SCREEN::SCR_GAME; }
-        } else if (menuIndex == 2) {          // Opciones
+        } else if (menuIndex == 2) {          // Cargar partida
+            StartLoadGame();
+        } else if (menuIndex == 3) {          // Opciones
             screen = SCREEN::SCR_OPTIONS;
             menuIndex = 0;
         } else {                              // Salir
@@ -254,12 +268,12 @@ void Game::HandleMainMenu() {
 }
 
 void Game::HandlePauseMenu() {
-    const int COUNT = 5;
+    const int COUNT = 7;
     if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_UP, false))   menuIndex = (menuIndex + COUNT - 1) % COUNT;
     if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN, false)) menuIndex = (menuIndex + 1) % COUNT;
 
-    // Auto-invertir toggles with Left/Right on its row.
-    if (menuIndex == 2 && (padPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT, false) ||
+    // Auto-invertir (row 4) toggles with Left/Right on its row.
+    if (menuIndex == 4 && (padPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT, false) ||
                            padPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT, false))) {
         autoFlip = !autoFlip;
         if (autoFlip) ApplyAutoFlip();
@@ -269,15 +283,19 @@ void Game::HandlePauseMenu() {
     if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false)) {  // Cross
         if (menuIndex == 0) {                 // Reanudar juego en curso
             screen = SCREEN::SCR_GAME;
-        } else if (menuIndex == 1) {          // Cambiar equipo
+        } else if (menuIndex == 1) {          // Guardar partida
+            StartSaveGame();
+        } else if (menuIndex == 2) {          // Cargar partida
+            StartLoadGame();
+        } else if (menuIndex == 3) {          // Cambiar equipo
             assignReturnsToGame = true;
             screen = SCREEN::SCR_ASSIGN;
             menuIndex = 0;
-        } else if (menuIndex == 2) {          // Auto-invertir (also toggles on Cross)
+        } else if (menuIndex == 4) {          // Auto-invertir (also toggles on Cross)
             autoFlip = !autoFlip;
             if (autoFlip) ApplyAutoFlip();
             SaveSettings();
-        } else if (menuIndex == 3) {          // Reiniciar partida
+        } else if (menuIndex == 5) {          // Reiniciar partida
             Reset();
             hasGame = true;
             screen = SCREEN::SCR_GAME;
@@ -356,6 +374,186 @@ void Game::HandleAssignMenu() {
         screen = assignReturnsToGame ? SCREEN::SCR_GAME : SCREEN::SCR_MAIN;
         menuIndex = 0;
     }
+}
+
+// --- Save / Load via the XMB Saved Data Utility -----------------------------
+
+#define RAYCHESS_SAVE_MAGIC   0x52434731u   /* "RCG1" */
+#define RAYCHESS_SAVE_VERSION 1
+
+namespace {
+// Little serializers over a byte vector (our own format, read back on the same
+// big-endian PPU, so no byte-swapping is needed).
+struct Writer {
+    std::vector<unsigned char> v;
+    void put(const void* p, unsigned n) { const unsigned char* b = (const unsigned char*)p; v.insert(v.end(), b, b + n); }
+    void u32(unsigned x)  { put(&x, 4); }
+    void i32(int x)       { put(&x, 4); }
+    void u8(unsigned char x) { v.push_back(x); }
+    void f64(double x)    { put(&x, 8); }
+};
+struct Reader {
+    const unsigned char* p; const unsigned char* end; bool ok;
+    Reader(const unsigned char* d, unsigned n) : p(d), end(d + n), ok(true) {}
+    void get(void* d, unsigned n) { if (p + n > end) { ok = false; return; } memcpy(d, p, n); p += n; }
+    unsigned u32() { unsigned x = 0; get(&x, 4); return x; }
+    int i32()      { int x = 0; get(&x, 4); return x; }
+    unsigned char u8() { unsigned char x = 0; get(&x, 1); return x; }
+    double f64()   { double x = 0; get(&x, 8); return x; }
+};
+}
+
+std::vector<unsigned char> Game::SerializeGame() const {
+    Writer w;
+    w.u32(RAYCHESS_SAVE_MAGIC);
+    w.u32(RAYCHESS_SAVE_VERSION);
+
+    // Settings / view.
+    w.i32(timeControlIndex);
+    w.u8(player1IsWhite ? 1 : 0);
+    w.u8(autoFlip ? 1 : 0);
+    w.u8(flipped ? 1 : 0);
+    w.i32(cursor.i);
+    w.i32(cursor.j);
+
+    // Live state (clocks tick past the last snapshot, so store them explicitly).
+    w.i32((int) turn);
+    w.i32(round);
+    w.i32((int) state);
+    w.f64(whiteClock);
+    w.f64(blackClock);
+
+    // Full move history.
+    w.i32(historyIndex);
+    w.u32((unsigned) history.size());
+    for (const Snapshot& s : history) {
+        w.i32((int) s.turn);
+        w.i32(s.round);
+        w.i32((int) s.state);
+        w.f64(s.whiteClock);
+        w.f64(s.blackClock);
+        w.i32(s.lastMoved.i);
+        w.i32(s.lastMoved.j);
+        w.u32((unsigned) s.pieces.size());
+        for (const PieceState& p : s.pieces) {
+            w.i32((int) p.type);
+            w.i32((int) p.color);
+            w.i32(p.i);
+            w.i32(p.j);
+            w.u8(p.hasMoved ? 1 : 0);
+        }
+    }
+    return w.v;
+}
+
+bool Game::DeserializeGame(const unsigned char* data, unsigned size) {
+    Reader r(data, size);
+    if (r.u32() != RAYCHESS_SAVE_MAGIC) return false;
+    if (r.u32() != RAYCHESS_SAVE_VERSION) return false;
+
+    int  tci  = r.i32();
+    bool p1w  = r.u8() != 0;
+    bool af   = r.u8() != 0;
+    bool fl   = r.u8() != 0;
+    Position cur; cur.i = r.i32(); cur.j = r.i32();
+
+    PIECE_COLOR lturn = (PIECE_COLOR) r.i32();
+    int         lround = r.i32();
+    GAME_STATE  lstate = (GAME_STATE) r.i32();
+    double lwc = r.f64();
+    double lbc = r.f64();
+
+    int hidx = r.i32();
+    unsigned hcount = r.u32();
+
+    std::vector<Snapshot> hist;
+    for (unsigned k = 0; k < hcount; k++) {
+        Snapshot s;
+        s.turn  = (PIECE_COLOR) r.i32();
+        s.round = r.i32();
+        s.state = (GAME_STATE) r.i32();
+        s.whiteClock = r.f64();
+        s.blackClock = r.f64();
+        s.lastMoved.i = r.i32();
+        s.lastMoved.j = r.i32();
+        unsigned np = r.u32();
+        for (unsigned m = 0; m < np; m++) {
+            PieceState p;
+            p.type  = (PIECE_TYPE) r.i32();
+            p.color = (PIECE_COLOR) r.i32();
+            p.i = r.i32();
+            p.j = r.i32();
+            p.hasMoved = r.u8() != 0;
+            s.pieces.push_back(p);
+        }
+        hist.push_back(s);
+    }
+
+    if (!r.ok) return false;
+    if (hcount == 0 || hidx < 0 || hidx >= (int) hcount) return false;
+    if (tci < 0 || tci >= TIME_CONTROL_COUNT) tci = 0;
+
+    // Commit.
+    timeControlIndex = tci;
+    player1IsWhite = p1w;
+    autoFlip = af;
+    history = hist;
+    historyIndex = hidx;
+    RestoreSnapshot(history[historyIndex]);   // rebuilds the board + recomputes moves
+
+    // Override with the saved live values (clocks, view).
+    turn = lturn;
+    round = lround;
+    state = lstate;
+    whiteClock = lwc;
+    blackClock = lbc;
+    clockActive = TIME_CONTROLS[timeControlIndex].baseSec > 0;
+    cursor = cur;
+    flipped = fl;
+    selectedPiece = nullptr;
+    return true;
+}
+
+void Game::StartSaveGame() {
+    std::vector<unsigned char> blob = SerializeGame();
+
+    std::string subtitle = "Ronda " + compat::to_string(round);
+    std::string detail = std::string("Turno: ") + (turn == PIECE_COLOR::C_WHITE ? "Blancas" : "Negras")
+                       + "\nRitmo: " + TIME_CONTROLS[timeControlIndex].label;
+
+    savegame_start_save(blob.data(), (unsigned) blob.size(),
+                        "RayChess", subtitle.c_str(), detail.c_str(),
+                        saveicon_png, saveicon_png_size);
+
+    saveBusyIsLoad = false;
+    saveReturnScreen = screen;   // came from the pause menu
+    screen = SCREEN::SCR_SAVEBUSY;
+}
+
+void Game::StartLoadGame() {
+    savegame_start_load();
+    saveBusyIsLoad = true;
+    saveReturnScreen = screen;   // main or pause menu
+    screen = SCREEN::SCR_SAVEBUSY;
+}
+
+void Game::HandleSaveBusy() {
+    int st = savegame_status();
+    if (st == SAVEGAME_BUSY) return;   // the XMB dialog owns input while it runs
+
+    if (st == SAVEGAME_OK && saveBusyIsLoad) {
+        unsigned sz = 0;
+        const void* d = savegame_result_data(&sz);
+        bool ok = d && DeserializeGame((const unsigned char*) d, sz);
+        savegame_clear();
+        if (ok) { hasGame = true; screen = SCREEN::SCR_GAME; }
+        else    { screen = saveReturnScreen; }
+    } else {
+        // Save finished, or the dialog was cancelled/failed: return where we came from.
+        savegame_clear();
+        screen = saveReturnScreen;
+    }
+    menuIndex = 0;
 }
 
 // --- Multi-controller input -------------------------------------------------
