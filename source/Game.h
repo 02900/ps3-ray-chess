@@ -24,7 +24,8 @@ enum GAME_STATE {
 enum SCREEN {
     SCR_MAIN,     // Nueva Partida / Reanudar / Cargar / Opciones / Salir
     SCR_MODESEL,  // choose the game mode (Clásico / 4 jugadores FFA / Equipos)
-    SCR_ASSIGN,   // controller-to-side selection
+    SCR_ASSIGN,   // controller-to-side selection (classic, 2 colours)
+    SCR_FOUR_ASSIGN,  // controller-to-colour selection (4 players)
     SCR_OPTIONS,  // Ritmo / Jugador 1 / Auto-invertir
     SCR_PAUSE,    // in-game pause menu (START)
     SCR_GAME,     // playing
@@ -90,6 +91,14 @@ private:
     void HandlePauseMenu();
     void HandleOptionsMenu();
     void HandleAssignMenu();
+    void HandleFourAssign();               // assign each pad to a 4-player colour
+
+    // 4-player input: a pad may act only on its colour's turn (a colour with no
+    // pad assigned is driven by any connected pad — the single-pad fallback).
+    bool fourPadActive(int i) const;
+    bool fourPressed(int button) const;
+    bool fourDown(int button) const;
+    float fourAxis(int axis) const;
     void HandleSaveBusy();      // poll the savedata thread; apply a loaded game
     void StartFourGame(FourMode fourMode);  // create + enter a 4-player game
 
@@ -192,6 +201,7 @@ private:
     // a self-contained FourGame that SCR_GAME delegates to.
     GameMode gameMode = MODE_CLASSIC;
     std::unique_ptr<FourGame> four;
+    PColor fourPadColor[4] = { P_RED, P_BLUE, P_YELLOW, P_GREEN };  // pad -> player colour
 
     // Save/load (XMB Saved Data Utility).
     bool saveBusyIsLoad = false;    // the running dialog is a load (vs save)

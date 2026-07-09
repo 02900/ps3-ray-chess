@@ -38,6 +38,7 @@ public:
     void ConfirmPromo();               // Cross: apply the chosen piece + advance turn
 
     FourMode Mode() const { return mode; }
+    PColor TurnColor() const { return players[current].color; }   // whose turn it is
 
 private:
     FourBoard board;

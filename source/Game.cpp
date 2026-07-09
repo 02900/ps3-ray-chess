@@ -113,6 +113,7 @@ void Game::Run() {
             case SCREEN::SCR_PAUSE:    HandlePauseMenu();   break;
             case SCREEN::SCR_OPTIONS:  HandleOptionsMenu(); break;
             case SCREEN::SCR_ASSIGN:   HandleAssignMenu();  break;
+            case SCREEN::SCR_FOUR_ASSIGN: HandleFourAssign(); break;
             case SCREEN::SCR_SAVEBUSY: HandleSaveBusy();    break;
         }
         if (quitRequested) break;  // main-menu "Salir"
@@ -222,6 +223,19 @@ void Game::Run() {
                     "Volver",
                 };
                 Renderer::RenderMenu("Modo de juego", lines, menuIndex, "");
+            } else if (screen == SCREEN::SCR_FOUR_ASSIGN) {
+                static const char* CN[4] = { "Rojo", "Azul", "Amarillo", "Verde" };
+                int pads[4];
+                int n = listAvailablePads(pads);
+                std::vector<std::string> lines;
+                for (int k = 0; k < n; k++) {
+                    lines.push_back("Mando " + compat::to_string(pads[k] + 1) + ": " +
+                                    CN[(int) fourPadColor[pads[k]]]);
+                }
+                lines.push_back(assignReturnsToGame ? "Aceptar" : "Comenzar");
+                std::string footer = "Detectados: " + compat::to_string(n) +
+                    "/4. Un color sin mando lo maneja cualquiera.";
+                Renderer::RenderMenu("Mandos por color", lines, menuIndex, footer);
             } else if (screen == SCREEN::SCR_PAUSE) {
                 std::vector<std::string> lines = {
                     "Reanudar juego en curso",
@@ -300,8 +314,76 @@ void Game::StartFourGame(FourMode fourMode) {
     gameMode = (fourMode == FOUR_FFA) ? MODE_4P_FFA : MODE_4P_TEAMS;
     four.reset(new FourGame(fourMode));
     hasGame = true;
-    screen = SCREEN::SCR_GAME;
+    // Assign controllers to colours before playing.
+    assignReturnsToGame = false;
+    screen = SCREEN::SCR_FOUR_ASSIGN;
     menuIndex = 0;
+}
+
+// --- 4-player controller helpers -------------------------------------------
+
+bool Game::fourPadActive(int i) const {
+    if (!IsGamepadAvailable(i)) return false;
+    if (!four) return true;
+    PColor cur = four->TurnColor();
+    bool curHasPad = false;
+    for (int k = 0; k < 4; k++) {
+        if (IsGamepadAvailable(k) && fourPadColor[k] == cur) { curHasPad = true; break; }
+    }
+    // A colour with no pad of its own is driven by any connected pad.
+    return curHasPad ? (fourPadColor[i] == cur) : true;
+}
+
+bool Game::fourPressed(int button) const {
+    for (int i = 0; i < 4; i++)
+        if (fourPadActive(i) && IsGamepadButtonPressed(i, button)) return true;
+    return false;
+}
+
+bool Game::fourDown(int button) const {
+    for (int i = 0; i < 4; i++)
+        if (fourPadActive(i) && IsGamepadButtonDown(i, button)) return true;
+    return false;
+}
+
+float Game::fourAxis(int axis) const {
+    float best = 0.0f;
+    for (int i = 0; i < 4; i++) {
+        if (!fourPadActive(i)) continue;
+        float v = GetGamepadAxisMovement(i, axis);
+        if ((v < 0 ? -v : v) > (best < 0 ? -best : best)) best = v;
+    }
+    return best;
+}
+
+void Game::HandleFourAssign() {
+    int pads[4];
+    int n = listAvailablePads(pads);
+    int count = n + 1;   // pad rows + the action row
+
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_UP, false))   menuIndex = (menuIndex + count - 1) % count;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN, false)) menuIndex = (menuIndex + 1) % count;
+    if (menuIndex >= count) menuIndex = count - 1;
+
+    // On a pad row, Left/Right cycle the assigned colour.
+    if (menuIndex < n) {
+        int p = pads[menuIndex];
+        if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT, false))
+            fourPadColor[p] = (PColor) (((int) fourPadColor[p] + 1) % 4);
+        if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT, false))
+            fourPadColor[p] = (PColor) (((int) fourPadColor[p] + 3) % 4);
+    }
+
+    // Cross on the action row starts / returns to the game.
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false) && menuIndex == n) {
+        screen = SCREEN::SCR_GAME;
+        menuIndex = 0;
+    }
+    // Circle backs out.
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, false)) {
+        screen = assignReturnsToGame ? SCREEN::SCR_GAME : SCREEN::SCR_MODESEL;
+        menuIndex = 0;
+    }
 }
 
 void Game::HandleGameFrame() {
@@ -314,20 +396,22 @@ void Game::HandleGameFrame() {
             return;
         }
 
+        // Gameplay input is restricted to the current player's pads (fourPressed /
+        // fourDown / fourAxis).
         // A pawn is awaiting its promotion choice: Left/Right pick, Cross confirms.
         if (four->IsPromoPending()) {
-            if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT, false))  four->PromoMove(-1);
-            if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT, false)) four->PromoMove(+1);
-            if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false)) four->ConfirmPromo();
+            if (fourPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT))  four->PromoMove(-1);
+            if (fourPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) four->PromoMove(+1);
+            if (fourPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) four->ConfirmPromo();
             return;
         }
 
         const float DZ = 0.5f;
         bool dir[4];
-        dir[0] = padDown(GAMEPAD_BUTTON_LEFT_FACE_UP, false)    || padAxis(GAMEPAD_AXIS_LEFT_Y, false) < -DZ;
-        dir[1] = padDown(GAMEPAD_BUTTON_LEFT_FACE_DOWN, false)  || padAxis(GAMEPAD_AXIS_LEFT_Y, false) >  DZ;
-        dir[2] = padDown(GAMEPAD_BUTTON_LEFT_FACE_LEFT, false)  || padAxis(GAMEPAD_AXIS_LEFT_X, false) < -DZ;
-        dir[3] = padDown(GAMEPAD_BUTTON_LEFT_FACE_RIGHT, false) || padAxis(GAMEPAD_AXIS_LEFT_X, false) >  DZ;
+        dir[0] = fourDown(GAMEPAD_BUTTON_LEFT_FACE_UP)    || fourAxis(GAMEPAD_AXIS_LEFT_Y) < -DZ;
+        dir[1] = fourDown(GAMEPAD_BUTTON_LEFT_FACE_DOWN)  || fourAxis(GAMEPAD_AXIS_LEFT_Y) >  DZ;
+        dir[2] = fourDown(GAMEPAD_BUTTON_LEFT_FACE_LEFT)  || fourAxis(GAMEPAD_AXIS_LEFT_X) < -DZ;
+        dir[3] = fourDown(GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || fourAxis(GAMEPAD_AXIS_LEFT_X) >  DZ;
         int di = 0, dj = 0;
         if (dir[0] && !dirPrev[0]) di -= 1;
         if (dir[1] && !dirPrev[1]) di += 1;
@@ -336,10 +420,9 @@ void Game::HandleGameFrame() {
         if (di || dj) four->MoveCursor(di, dj);
         for (int k = 0; k < 4; k++) dirPrev[k] = dir[k];
 
-        // Cross selects / moves; Circle cancels. (Any pad drives the current player
-        // for now; per-colour pad assignment is M2b.)
-        if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false))  four->Select();
-        if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, false)) four->Cancel();
+        // Cross selects / moves; Circle cancels.
+        if (fourPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN))  four->Select();
+        if (fourPressed(GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) four->Cancel();
         return;
     }
 
@@ -413,12 +496,10 @@ void Game::HandlePauseMenu() {
             if (classic) StartSaveGame();
         } else if (menuIndex == 2) {          // Cargar partida (classic only for now)
             if (classic) StartLoadGame();
-        } else if (menuIndex == 3) {          // Cambiar equipo (classic assignment; 4P is M2)
-            if (classic) {
-                assignReturnsToGame = true;
-                screen = SCREEN::SCR_ASSIGN;
-                menuIndex = 0;
-            }
+        } else if (menuIndex == 3) {          // Cambiar equipo (controller assignment)
+            assignReturnsToGame = true;
+            screen = classic ? SCREEN::SCR_ASSIGN : SCREEN::SCR_FOUR_ASSIGN;
+            menuIndex = 0;
         } else if (menuIndex == 4) {          // Auto-invertir (also toggles on Cross)
             autoFlip = !autoFlip;
             if (autoFlip) ApplyAutoFlip();
