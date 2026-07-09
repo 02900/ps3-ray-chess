@@ -8,6 +8,7 @@
 #include "compat.h"  // compat::to_string (PS3 newlib lacks std::to_string)
 
 #include <cstring>   // memcpy for game-state (de)serialization
+#include <cctype>    // toupper for algebraic notation
 #include "pieces/Queen.h"
 #include "pieces/Knight.h"
 #include "pieces/Bishop.h"
@@ -132,6 +133,12 @@ void Game::Run() {
             // (selection, move dots, cursor, promotion/end overlays) show only in-game.
             Renderer::RenderBackground();
 
+            // Highlight the last move's from/to squares (under the pieces).
+            const Snapshot& shown = history[historyIndex];
+            if (inGame && shown.hasMove) {
+                Renderer::RenderLastMove(shown.moveFrom, shown.moveTo);
+            }
+
             if (inGame && state == GAME_STATE::S_RUNNING && selectedPiece != nullptr) {
                 Renderer::RenderSelection(selectedPiece->GetPosition());
             }
@@ -148,6 +155,28 @@ void Game::Run() {
 
             Renderer::RenderGuideText();
             Renderer::RenderInfoBar(round, time, clockActive, whiteClock, blackClock, player1IsWhite);
+
+            // Side panels: move list (left) and captured pieces (right), built from the
+            // history up to the shown position so they follow L1/R1 too.
+            if (inGame) {
+                static const int VAL[6] = { 1, 5, 3, 3, 9, 0 };  // PEON,ROOK,KNIGHT,BISHOP,QUEEN,KING
+                std::vector<std::string> sans, capByWhite, capByBlack;
+                int matDiff = 0;
+                for (int k = 1; k <= historyIndex; k++) {
+                    const Snapshot& s = history[k];
+                    if (s.hasMove) sans.push_back(s.san);
+                    if (s.capturedType >= 0) {
+                        bool whiteVictim = (s.capturedColor == (int) PIECE_COLOR::C_WHITE);
+                        std::string key = std::string(whiteVictim ? "w" : "b")
+                                        + Piece::GetPieceCharacterByType((PIECE_TYPE) s.capturedType);
+                        int v = VAL[s.capturedType];
+                        if (whiteVictim) { capByBlack.push_back(key); matDiff -= v; }
+                        else             { capByWhite.push_back(key); matDiff += v; }
+                    }
+                }
+                Renderer::RenderMoveList(sans);
+                Renderer::RenderCaptured(textures, capByWhite, capByBlack, matDiff);
+            }
 
             if (inGame && state == GAME_STATE::S_PROMOTION) {
                 Renderer::RenderPromotionScreen(textures, selectedPiece->color);
@@ -379,7 +408,7 @@ void Game::HandleAssignMenu() {
 // --- Save / Load via the XMB Saved Data Utility -----------------------------
 
 #define RAYCHESS_SAVE_MAGIC   0x52434731u   /* "RCG1" */
-#define RAYCHESS_SAVE_VERSION 1
+#define RAYCHESS_SAVE_VERSION 2             /* v2 adds per-snapshot move metadata */
 
 namespace {
 // Little serializers over a byte vector (our own format, read back on the same
@@ -391,6 +420,7 @@ struct Writer {
     void i32(int x)       { put(&x, 4); }
     void u8(unsigned char x) { v.push_back(x); }
     void f64(double x)    { put(&x, 8); }
+    void str(const std::string& s) { u32((unsigned) s.size()); put(s.data(), (unsigned) s.size()); }
 };
 struct Reader {
     const unsigned char* p; const unsigned char* end; bool ok;
@@ -400,6 +430,11 @@ struct Reader {
     int i32()      { int x = 0; get(&x, 4); return x; }
     unsigned char u8() { unsigned char x = 0; get(&x, 1); return x; }
     double f64()   { double x = 0; get(&x, 8); return x; }
+    std::string str() {
+        unsigned n = u32();
+        if (!ok || p + n > end) { ok = false; return std::string(); }
+        std::string s((const char*) p, n); p += n; return s;
+    }
 };
 }
 
@@ -442,6 +477,13 @@ std::vector<unsigned char> Game::SerializeGame() const {
             w.i32(p.j);
             w.u8(p.hasMoved ? 1 : 0);
         }
+        // v2 move metadata.
+        w.u8(s.hasMove ? 1 : 0);
+        w.str(s.san);
+        w.i32(s.moveFrom.i); w.i32(s.moveFrom.j);
+        w.i32(s.moveTo.i);   w.i32(s.moveTo.j);
+        w.i32(s.capturedType);
+        w.i32(s.capturedColor);
     }
     return w.v;
 }
@@ -449,7 +491,8 @@ std::vector<unsigned char> Game::SerializeGame() const {
 bool Game::DeserializeGame(const unsigned char* data, unsigned size) {
     Reader r(data, size);
     if (r.u32() != RAYCHESS_SAVE_MAGIC) return false;
-    if (r.u32() != RAYCHESS_SAVE_VERSION) return false;
+    unsigned version = r.u32();
+    if (version != 1 && version != 2) return false;
 
     int  tci  = r.i32();
     bool p1w  = r.u8() != 0;
@@ -485,6 +528,20 @@ bool Game::DeserializeGame(const unsigned char* data, unsigned size) {
             p.j = r.i32();
             p.hasMoved = r.u8() != 0;
             s.pieces.push_back(p);
+        }
+        // v2 move metadata (defaults for v1 saves).
+        if (version >= 2) {
+            s.hasMove = r.u8() != 0;
+            s.san = r.str();
+            s.moveFrom.i = r.i32(); s.moveFrom.j = r.i32();
+            s.moveTo.i   = r.i32(); s.moveTo.j   = r.i32();
+            s.capturedType  = r.i32();
+            s.capturedColor = r.i32();
+        } else {
+            s.hasMove = false;
+            s.moveFrom = s.moveTo = {0, 0};
+            s.capturedType = -1;
+            s.capturedColor = 0;
         }
         hist.push_back(s);
     }
@@ -687,15 +744,19 @@ void Game::HandleInputPromotion() {
         PIECE_COLOR color = selectedPiece->color;
         Piece* newPiece;
 
+        const char* promoLetter;
         if (promotionChoice == 0) {        // Queen.
-            newPiece = new Queen(pos, color);
+            newPiece = new Queen(pos, color);  promoLetter = "Q";
         } else if (promotionChoice == 1) { // Rook.
-            newPiece = new Rook(pos, color);
+            newPiece = new Rook(pos, color);   promoLetter = "R";
         } else if (promotionChoice == 2) { // Bishop.
-            newPiece = new Bishop(pos, color);
+            newPiece = new Bishop(pos, color); promoLetter = "B";
         } else {                           // Knight.
-            newPiece = new Knight(pos, color);
+            newPiece = new Knight(pos, color); promoLetter = "N";
         }
+
+        pendingSan += "=";           // finish the SAN, e.g. "e8=Q"
+        pendingSan += promoLetter;
 
         // Destroy peon, create new piece at same position.
         board.Destroy(pos);
@@ -727,6 +788,26 @@ Move* Game::GetMoveAtPosition(const Position& position) {
 }
 
 void Game::DoMoveOnBoard(const Move& move) {
+    // Record the move's metadata BEFORE the board mutates (for the move list,
+    // captured-pieces panel and last-move highlight; copied into the snapshot).
+    pendingHasMove = true;
+    pendingFrom = selectedPiece->GetPosition();
+    pendingTo = move.position;
+    pendingCapturedType = -1;
+
+    Piece* victim = nullptr;
+    if (move.type == MOVE_TYPE::ATTACK || move.type == MOVE_TYPE::ATTACK_AND_PROMOTION) {
+        victim = board.At(move.position);
+    } else if (move.type == MOVE_TYPE::EN_PASSANT) {
+        victim = board.At({ selectedPiece->GetPosition().i, move.position.j });
+    }
+    if (victim != nullptr) {
+        pendingCapturedType = (int) victim->type;
+        pendingCapturedColor = (int) victim->color;
+    }
+
+    pendingSan = MoveToSan(selectedPiece, move);  // base SAN; suffixes added later
+
     board.DoMove(selectedPiece, move);
 
     // If the move was a promotion move, show the promotion screen. Else, swap turns.
@@ -735,6 +816,34 @@ void Game::DoMoveOnBoard(const Move& move) {
     } else {
         SwapTurns();
     }
+}
+
+// Base algebraic notation (no promotion / check suffix — those are appended by the callers).
+std::string Game::MoveToSan(Piece* piece, const Move& move) const {
+    if (move.type == MOVE_TYPE::SHORT_CASTLING) return "O-O";
+    if (move.type == MOVE_TYPE::LONG_CASTLING)  return "O-O-O";
+
+    bool isCapture = move.type == MOVE_TYPE::ATTACK ||
+                     move.type == MOVE_TYPE::ATTACK_AND_PROMOTION ||
+                     move.type == MOVE_TYPE::EN_PASSANT;
+
+    Position from = piece->GetPosition();
+    char fromFile = (char) ('a' + from.j);
+    char toFile   = (char) ('a' + move.position.j);
+    char toRank   = (char) ('8' - move.position.i);
+
+    std::string san;
+    if (piece->type == PIECE_TYPE::PEON) {
+        if (isCapture) { san += fromFile; san += 'x'; }  // pawn captures show the from-file
+    } else {
+        // Piece letter (uppercase): R/N/B/Q/K.
+        std::string c = Piece::GetPieceCharacterByType(piece->type);
+        if (!c.empty()) san += (char) toupper(c[0]);
+        if (isCapture) san += 'x';
+    }
+    san += toFile;
+    san += toRank;
+    return san;
 }
 
 void Game::SwapTurns() {
@@ -757,11 +866,13 @@ void Game::SwapTurns() {
     // Check for stalemates or checkmates. If so, ends the game.
     CheckForEndOfGame();
 
-    // Feedback: victory fanfare on checkmate, alert when the side to move is in check.
+    // Feedback + SAN check/mate suffix: checkmate ends the game, otherwise flag a check.
     if (state == GAME_STATE::S_WHITE_WINS || state == GAME_STATE::S_BLACK_WINS) {
         audio_play_win();
+        if (pendingHasMove) pendingSan += "#";
     } else if (state == GAME_STATE::S_RUNNING && board.IsInCheck(turn)) {
         audio_play_check();
+        if (pendingHasMove) pendingSan += "+";
     }
 
     if (autoFlip) ApplyAutoFlip();
@@ -873,6 +984,11 @@ void Game::Reset() {
     cursor = {6, 4};
     flipped = false;
 
+    // No move produced the initial position.
+    pendingHasMove = false;
+    pendingSan.clear();
+    pendingCapturedType = -1;
+
     ApplyTimeControl();
     CalculateAllPossibleMovements();
 
@@ -947,6 +1063,14 @@ Game::Snapshot Game::MakeSnapshot() const {
     s.state = state;
     s.whiteClock = whiteClock;
     s.blackClock = blackClock;
+
+    // Move metadata (the move that produced this position).
+    s.hasMove = pendingHasMove;
+    s.san = pendingSan;
+    s.moveFrom = pendingFrom;
+    s.moveTo = pendingTo;
+    s.capturedType = pendingCapturedType;
+    s.capturedColor = pendingCapturedColor;
     return s;
 }
 

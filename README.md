@@ -141,6 +141,10 @@ ps3-ray-chess/
   Utility** (`source/savegame.c` — `sysSaveListSave2/Load2` on a background thread, memory container,
   list/status/file callbacks, ICON0). A save serializes the full state + move history
   (`Game::SerializeGame`), so a game resumes exactly. The save appears in the PS3's *Saved Data* manager.
+- **Board UI** *(done)*: the letterbox margins host a **move list** in algebraic notation (left) and
+  **captured pieces** with a material-advantage readout (right); the **last move's** from/to squares
+  are highlighted. All three follow L1/R1 history and ride along with saves (per-snapshot SAN +
+  captured piece, save format v2). (SAN omits disambiguation for the rare two-pieces-same-square case.)
 
 ## Credits & license
 

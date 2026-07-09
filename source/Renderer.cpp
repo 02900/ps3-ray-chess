@@ -240,6 +240,81 @@ void Renderer::RenderPromotionCursor(int choice) {
     DrawRectangleLinesEx(rect, 4, Color{255, 205, 0, 255});  // gold outline
 }
 
+void Renderer::RenderLastMove(const Position& from, const Position& to) {
+    Color hl = Color{246, 226, 90, 90};  // translucent yellow, under the pieces
+    int x, y;
+    CellOrigin(from.i, from.j, x, y);
+    DrawRectangle(x, y, Game::CELL_SIZE, Game::CELL_SIZE, hl);
+    CellOrigin(to.i, to.j, x, y);
+    DrawRectangle(x, y, Game::CELL_SIZE, Game::CELL_SIZE, hl);
+}
+
+// Draw a wrapping row of small piece icons; returns the y below the last row.
+static int DrawCapturedIcons(const std::map<std::string, Texture>& textures,
+                             const std::vector<std::string>& keys,
+                             int x0, int y0, int panelW) {
+    const int icon = 30, pad = 2;
+    int perRow = (panelW - 24) / (icon + pad);
+    if (perRow < 1) perRow = 1;
+    int x = x0, y = y0, col = 0;
+    for (const std::string& key : keys) {
+        auto it = textures.find(key);
+        if (it != textures.end()) {
+            Rectangle src = { 0, 0, (float) it->second.width, (float) it->second.height };
+            Rectangle dst = { (float) x, (float) y, (float) icon, (float) icon };
+            DrawTexturePro(it->second, src, dst, (Vector2){0, 0}, 0.0f, WHITE);
+        }
+        x += icon + pad;
+        if (++col >= perRow) { col = 0; x = x0; y += icon + pad; }
+    }
+    return (col == 0) ? y : y + icon + pad;
+}
+
+void Renderer::RenderCaptured(const std::map<std::string, Texture>& textures,
+                              const std::vector<std::string>& whiteCaptured,
+                              const std::vector<std::string>& blackCaptured,
+                              int materialDiff) {
+    int px = 650, py = Game::INFO_BAR_HEIGHT;
+    int pw = 290, ph = Game::WINDOW_HEIGHT - Game::INFO_BAR_HEIGHT;
+    DrawRectangle(px, py, pw, ph, Color{20, 20, 24, 220});
+    DrawText("Capturadas", px + 12, py + 8, 20, Color{255, 205, 0, 255});
+
+    int y = py + 42;
+    DrawText("Blancas", px + 12, y, 16, Color{210, 210, 210, 255});
+    y = DrawCapturedIcons(textures, whiteCaptured, px + 12, y + 22, pw) + 14;
+
+    DrawText("Negras", px + 12, y, 16, Color{210, 210, 210, 255});
+    DrawCapturedIcons(textures, blackCaptured, px + 12, y + 22, pw);
+
+    if (materialDiff != 0) {
+        std::string m = std::string("Ventaja: ") + (materialDiff > 0 ? "Blancas +" : "Negras +")
+                      + compat::to_string(materialDiff > 0 ? materialDiff : -materialDiff);
+        DrawText(m.c_str(), px + 12, py + ph - 28, 16, Color{255, 205, 0, 255});
+    }
+}
+
+void Renderer::RenderMoveList(const std::vector<std::string>& sans) {
+    int px = -305, py = Game::INFO_BAR_HEIGHT;
+    int pw = 290, ph = Game::WINDOW_HEIGHT - Game::INFO_BAR_HEIGHT;
+    DrawRectangle(px, py, pw, ph, Color{20, 20, 24, 220});
+    DrawText("Jugadas", px + 12, py + 8, 20, Color{255, 205, 0, 255});
+
+    const int rowH = 22, fontSize = 18, top = py + 40;
+    int rows = (ph - 48) / rowH;                       // visible move-pairs
+    int totalMoves = (int) ((sans.size() + 1) / 2);    // "N. white black" rows
+    int startMove = (totalMoves > rows) ? totalMoves - rows : 0;   // scroll to latest
+
+    int y = top;
+    for (int mv = startMove; mv < totalMoves; mv++) {
+        std::string line = compat::to_string(mv + 1) + ". ";
+        int wi = mv * 2, bi = mv * 2 + 1;
+        if (wi < (int) sans.size()) line += sans[wi];
+        if (bi < (int) sans.size()) line += "   " + sans[bi];
+        DrawText(line.c_str(), px + 12, y, fontSize, WHITE);
+        y += rowH;
+    }
+}
+
 void Renderer::ChangeMouseCursor(const Board& board, const std::vector<Move>& possibleMoves, PIECE_COLOR turn, bool inPromotion) {
     Vector2 mousePosition = GetMousePosition();
     mousePosition.y -= Game::INFO_BAR_HEIGHT;

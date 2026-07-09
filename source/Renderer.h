@@ -27,6 +27,14 @@ public:
     // pieces stay upright — only cell positions and coordinate labels are remapped.
     static void SetFlipped(bool flipped);
 
+    // Side-panel UI (drawn in the letterbox margins) + last-move highlight.
+    static void RenderLastMove(const Position& from, const Position& to);
+    static void RenderMoveList(const std::vector<std::string>& sans);
+    static void RenderCaptured(const std::map<std::string, Texture>& textures,
+                               const std::vector<std::string>& whiteCaptured,
+                               const std::vector<std::string>& blackCaptured,
+                               int materialDiff);
+
 private:
     static std::string GetTextureNameFromMoveType(MOVE_TYPE moveType);
     static Color GetShadeColor(PIECE_COLOR color);

@@ -91,6 +91,10 @@ private:
     std::vector<unsigned char> SerializeGame() const;
     bool DeserializeGame(const unsigned char* data, unsigned size);
 
+    // Base algebraic notation for a move (piece + capture + destination + castling);
+    // promotion "=X" and check/mate "+/#" suffixes are appended by the callers.
+    std::string MoveToSan(Piece* piece, const Move& move) const;
+
     void CalculateAllPossibleMovements();
     void CheckForEndOfGame();
     void FilterMovesThatAttackOppositeKing();
@@ -116,6 +120,15 @@ private:
         int round;
         GAME_STATE state;
         double whiteClock, blackClock;
+
+        // Metadata of the move that produced this position (initial snapshot: hasMove=false).
+        // Powers the move list, the captured-pieces panel and the last-move highlight, and
+        // rides along with history nav + saves.
+        bool hasMove;
+        std::string san;              // algebraic notation of the move
+        Position moveFrom, moveTo;    // the from/to squares
+        int capturedType;             // PIECE_TYPE captured, or -1 if none
+        int capturedColor;            // PIECE_COLOR of the captured piece
     };
     Snapshot MakeSnapshot() const;
     void RestoreSnapshot(const Snapshot& snapshot);
@@ -135,6 +148,14 @@ private:
     // Selected piece/possible moves state.
     Piece* selectedPiece = nullptr;
     std::map<Piece*, std::vector<Move>> possibleMovesPerPiece;
+
+    // Metadata of the move currently being played, filled by DoMoveOnBoard /
+    // HandleInputPromotion and copied into the next Snapshot by MakeSnapshot.
+    bool pendingHasMove = false;
+    std::string pendingSan;
+    Position pendingFrom = {0, 0}, pendingTo = {0, 0};
+    int pendingCapturedType = -1;
+    int pendingCapturedColor = 0;
 
     // Gamepad input state (replaces the desktop mouse). The cursor is a board cell;
     // dirPrev holds the previous frame's up/down/left/right so movement is
