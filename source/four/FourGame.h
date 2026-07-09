@@ -15,7 +15,7 @@
 enum FourMode { FOUR_FFA, FOUR_TEAMS };
 
 // A candidate move of the piece at the selected square.
-enum MoveKind { MK_WALK, MK_CAPTURE, MK_DOUBLE, MK_PROMO };
+enum MoveKind { MK_WALK, MK_CAPTURE, MK_DOUBLE, MK_PROMO, MK_ENPASSANT, MK_CASTLE };
 struct Move4 { int i, j; MoveKind kind; };
 
 class FourGame {
@@ -31,6 +31,11 @@ public:
     void Select();                     // Cross: pick up / drop on the cursor square
     void Cancel();                     // Circle: clear the selection
     void Render(const std::map<std::string, Texture>& textures, bool active) const;
+
+    // Promotion picker (Q/R/B/N) while a pawn awaits its choice.
+    bool IsPromoPending() const { return promoPending; }
+    void PromoMove(int delta);         // Left/Right through the four options
+    void ConfirmPromo();               // Cross: apply the chosen piece + advance turn
 
     FourMode Mode() const { return mode; }
 
@@ -48,6 +53,16 @@ private:
     Position selected = {0, 0};
     std::vector<Move4> selMoves;
 
+    // En-passant window: valid only for the ply immediately after a double-step.
+    bool epValid = false;
+    Position epMid = {0, 0};    // the square the pawn passed over (capture lands here)
+    Position epPawn = {0, 0};   // the double-stepped pawn to remove
+
+    // Promotion picker.
+    bool promoPending = false;
+    Position promoSquare = {0, 0};
+    int promoChoice = 0;        // 0..3 = Queen / Rook / Bishop / Knight
+
     // Move engine.
     PColor CurrentColor() const { return players[current].color; }
     int TeamOf(PColor c) const;                 // FFA: unique per colour; Teams: 0/1
@@ -55,6 +70,7 @@ private:
     void ForwardDir(PColor c, int& di, int& dj) const;  // pawn advance vector
     bool IsPromoSquare(PColor c, int i, int j) const;
     void GenMoves(int i, int j, std::vector<Move4>& out) const;             // pseudo-legal
+    void AddCastling(int i, int j, std::vector<Move4>& out) const;
     void GenAttackSquares(const FourBoard& b, int i, int j, std::vector<Position>& out) const;
     bool KingAttacked(const FourBoard& b, PColor c) const;
     void LegalMoves(int i, int j, std::vector<Move4>& out) const;           // filtered

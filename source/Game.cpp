@@ -313,6 +313,15 @@ void Game::HandleGameFrame() {
             menuIndex = 0;
             return;
         }
+
+        // A pawn is awaiting its promotion choice: Left/Right pick, Cross confirms.
+        if (four->IsPromoPending()) {
+            if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT, false))  four->PromoMove(-1);
+            if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT, false)) four->PromoMove(+1);
+            if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false)) four->ConfirmPromo();
+            return;
+        }
+
         const float DZ = 0.5f;
         bool dir[4];
         dir[0] = padDown(GAMEPAD_BUTTON_LEFT_FACE_UP, false)    || padAxis(GAMEPAD_AXIS_LEFT_Y, false) < -DZ;

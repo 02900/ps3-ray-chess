@@ -130,7 +130,7 @@ void FourGame::GenMoves(int i, int j, std::vector<Move4>& out) const {
         case BISHOP: rays(BISHOP_DIR, 4); break;
         case QUEEN:  rays(ROOK_DIR, 4); rays(BISHOP_DIR, 4); break;
         case KNIGHT: steps(KNIGHT_OFF, 8); break;
-        case KING:   steps(KING_OFF, 8); break;   // castling in M2b
+        case KING:   steps(KING_OFF, 8); AddCastling(i, j, out); break;
         case PEON: {
             int di, dj; ForwardDir(me, di, dj);
             int oi = i + di, oj = j + dj;
@@ -152,10 +152,58 @@ void FourGame::GenMoves(int i, int j, std::vector<Move4>& out) const {
                 const Piece4& t = board.At(ti, tj);
                 if (t.present && IsEnemy(me, t.color) && t.type != KING) {
                     out.push_back({ti, tj, IsPromoSquare(me, ti, tj) ? MK_PROMO : MK_CAPTURE});
+                } else if (!t.present && epValid && ti == epMid.i && tj == epMid.j &&
+                           IsEnemy(me, board.At(epPawn.i, epPawn.j).color)) {
+                    out.push_back({ti, tj, MK_ENPASSANT});
                 }
             }
             break;
         }
+    }
+}
+
+void FourGame::AddCastling(int i, int j, std::vector<Move4>& out) const {
+    const Piece4& king = board.At(i, j);
+    if (king.type != KING || king.hasMoved) return;
+    PColor c = king.color;
+    if (KingAttacked(board, c)) return;   // can't castle out of check
+
+    int di, dj; ForwardDir(c, di, dj);
+    bool axisJ = (di != 0);               // king slides along j (horizontal back rank)
+    int kc = axisJ ? j : i;               // king coordinate on the sliding axis
+
+    for (int side = 0; side < 2; side++) {
+        int rookCoord = (side == 0) ? 3 : 10;
+        int dir = (rookCoord > kc) ? +1 : -1;
+        int ri = axisJ ? i : rookCoord;
+        int rj = axisJ ? rookCoord : j;
+        const Piece4& rook = board.At(ri, rj);
+        if (!rook.present || rook.color != c || rook.type != ROOK || rook.hasMoved) continue;
+
+        // Squares strictly between king and rook must be empty.
+        bool clear = true;
+        for (int step = kc + dir; step != rookCoord; step += dir) {
+            int si = axisJ ? i : step, sj = axisJ ? step : j;
+            if (board.At(si, sj).present) { clear = false; break; }
+        }
+        if (!clear) continue;
+
+        // The king must not pass through or land on an attacked square.
+        bool safe = true;
+        for (int s = 1; s <= 2 && safe; s++) {
+            int ti = axisJ ? i : (i + dir * s);
+            int tj = axisJ ? (j + dir * s) : j;
+            FourBoard copy = board;
+            copy.At(i, j) = { false, P_NONE, PEON, false, false };
+            Piece4 k = king; k.hasMoved = true;
+            copy.At(ti, tj) = k;
+            if (KingAttacked(copy, c)) safe = false;
+        }
+        if (!safe) continue;
+
+        int kti = axisJ ? i : (i + dir * 2);
+        int ktj = axisJ ? (j + dir * 2) : j;
+        out.push_back({ kti, ktj, MK_CASTLE });
     }
 }
 
@@ -230,9 +278,12 @@ void FourGame::LegalMoves(int i, int j, std::vector<Move4>& out) const {
         FourBoard copy = board;   // Piece4 is POD, trivially copyable
         Piece4 mover = copy.At(i, j);
         copy.At(i, j) = { false, P_NONE, PEON, false, false };
+        if (m.kind == MK_ENPASSANT) copy.At(epPawn.i, epPawn.j) = { false, P_NONE, PEON, false, false };
         if (m.kind == MK_PROMO) mover.type = QUEEN;
         mover.hasMoved = true;
         copy.At(m.i, m.j) = mover;   // captures by overwrite
+        // (Castling's rook move doesn't affect the mover's king safety, so the
+        //  generic king move here is enough; AddCastling already vetted the path.)
         if (!KingAttacked(copy, me)) out.push_back(m);
     }
 }
@@ -240,9 +291,59 @@ void FourGame::LegalMoves(int i, int j, std::vector<Move4>& out) const {
 void FourGame::ApplyMove(int fi, int fj, const Move4& m) {
     Piece4 mover = board.At(fi, fj);
     board.At(fi, fj) = { false, P_NONE, PEON, false, false };
-    if (m.kind == MK_PROMO) mover.type = QUEEN;   // auto-queen (choice menu is M2b)
+
+    if (m.kind == MK_ENPASSANT) {
+        board.At(epPawn.i, epPawn.j) = { false, P_NONE, PEON, false, false };
+    }
+
     mover.hasMoved = true;
-    board.At(m.i, m.j) = mover;
+    board.At(m.i, m.j) = mover;   // captures by overwrite
+
+    if (m.kind == MK_CASTLE) {
+        // Move the rook to the square the king crossed.
+        int ddi = m.i - fi, ddj = m.j - fj;
+        bool axisJ = (ddj != 0);
+        int dir = axisJ ? (ddj > 0 ? 1 : -1) : (ddi > 0 ? 1 : -1);
+        int rc = (dir > 0) ? 10 : 3;
+        int ri = axisJ ? fi : rc, rj = axisJ ? rc : fj;
+        int rti = axisJ ? fi : (fi + dir), rtj = axisJ ? (fj + dir) : fj;
+        Piece4 rook = board.At(ri, rj);
+        board.At(ri, rj) = { false, P_NONE, PEON, false, false };
+        rook.hasMoved = true;
+        board.At(rti, rtj) = rook;
+    }
+
+    // En-passant window is open only for the ply right after a double-step.
+    if (m.kind == MK_DOUBLE) {
+        epValid = true;
+        epMid  = { (fi + m.i) / 2, (fj + m.j) / 2 };
+        epPawn = { m.i, m.j };
+    } else {
+        epValid = false;
+    }
+
+    if (m.kind == MK_PROMO) {
+        promoPending = true;
+        promoSquare = { m.i, m.j };
+        promoChoice = 0;
+        return;   // hold the turn until the player picks a piece
+    }
+
+    NextTurn();
+}
+
+void FourGame::PromoMove(int delta) {
+    if (!promoPending) return;
+    promoChoice += delta;
+    if (promoChoice < 0) promoChoice = 0;
+    if (promoChoice > 3) promoChoice = 3;
+}
+
+void FourGame::ConfirmPromo() {
+    if (!promoPending) return;
+    static const PIECE_TYPE opts[4] = { QUEEN, ROOK, BISHOP, KNIGHT };
+    board.At(promoSquare.i, promoSquare.j).type = opts[promoChoice];
+    promoPending = false;
     NextTurn();
 }
 
@@ -360,5 +461,30 @@ void FourGame::Render(const std::map<std::string, Texture>& textures, bool activ
             DrawText(tm.c_str(), s.x + 14, s.y + 90, 18, Color{170,170,180,255});
         }
         if (isCurrent) DrawText("Turno", s.x + 14, s.y + 118, 18, Color{255,205,0,255});
+    }
+
+    // Promotion picker (on top of everything).
+    if (active && promoPending) {
+        static const PIECE_TYPE opts[4] = { QUEEN, ROOK, BISHOP, KNIGHT };
+        int cw = CELL + 10;
+        int pw = 4 * cw + 16, ph = CELL + 44;
+        int px = BOARD_PX / 2 - pw / 2, py = BOARD_PX / 2 - ph / 2;
+
+        DrawRectangle(px, py, pw, ph, Color{ 20, 20, 26, 244 });
+        Rectangle border = { (float) px, (float) py, (float) pw, (float) ph };
+        DrawRectangleLinesEx(border, 2, Color{ 255, 205, 0, 255 });
+        DrawText("Promocion", px + 10, py + 6, 18, WHITE);
+
+        for (int k = 0; k < 4; k++) {
+            int cx = px + 8 + k * cw, cy = py + 30;
+            if (k == promoChoice) DrawRectangle(cx - 3, cy - 3, CELL + 6, CELL + 6, Color{ 80, 160, 255, 150 });
+            std::string key = std::string("w") + TypeChar(opts[k]);
+            auto it = textures.find(key);
+            if (it != textures.end()) {
+                Rectangle src = { 0, 0, (float) it->second.width, (float) it->second.height };
+                Rectangle dst = { (float) cx, (float) cy, (float) CELL, (float) CELL };
+                DrawTexturePro(it->second, src, dst, (Vector2){ 0, 0 }, 0.0f, TintFor(CurrentColor()));
+            }
+        }
     }
 }

@@ -149,11 +149,11 @@ ps3-ray-chess/
   `source/four/` engine** (14×14 board, four 3×3 corners removed, four armies tinted red/blue/yellow/
   green from the white silhouettes), routed via a **mode-select menu** (*Clásico* / *4 jugadores FFA*
   / *Equipos*). Done: board + setup + render (M1); **legal move generation** for all pieces on the
-  masked board, 4 pawn directions + double-step + auto-queen promotion, can't-capture-own/teammate,
-  own-king-safe filter, **turn order** Red→Blue→Yellow→Green, select/move with move highlights (M2a).
-  Coming: castling + en passant + promotion menu + per-colour pad assignment (M2b), check/mate/
-  elimination + dead pieces + win conditions (M3), the FFA points system (M4), HUD + save/load (M5).
-  The classic game is untouched.
+  masked board, 4 pawn directions + double-step, can't-capture-own/teammate, own-king-safe filter,
+  **turn order** Red→Blue→Yellow→Green, select/move with highlights (M2a); **castling** (per-side
+  orientation), **en passant**, and a **promotion menu** (Q/R/B/N) (M2b). Coming: per-colour pad
+  assignment; check/mate/elimination + dead pieces + win conditions (M3); the FFA points system (M4);
+  HUD + save/load (M5). The classic game is untouched.
 
 ## Credits & license
 
