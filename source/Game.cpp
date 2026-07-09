@@ -109,6 +109,7 @@ void Game::Run() {
         switch (screen) {
             case SCREEN::SCR_GAME:     HandleGameFrame();  break;
             case SCREEN::SCR_MAIN:     HandleMainMenu();    break;
+            case SCREEN::SCR_MODESEL:  HandleModeSelect();  break;
             case SCREEN::SCR_PAUSE:    HandlePauseMenu();   break;
             case SCREEN::SCR_OPTIONS:  HandleOptionsMenu(); break;
             case SCREEN::SCR_ASSIGN:   HandleAssignMenu();  break;
@@ -116,13 +117,25 @@ void Game::Run() {
         }
         if (quitRequested) break;  // main-menu "Salir"
 
-        // Render.
+        // Render. Center the active board on the 1280x720 screen (the 4-player board
+        // is a bit wider than the classic one, so its offset differs).
+        bool fourPlayer = (gameMode != MODE_CLASSIC) && four;
+        camera.offset = (Vector2){
+            (float) (fourPlayer ? (SCREEN_WIDTH - FourGame::BOARD_PX) / 2 : BOARD_OFFSET_X),
+            (float) BOARD_OFFSET_Y
+        };
+
         Renderer::SetFlipped(flipped);
         BeginDrawing();
         ClearBackground(Color{25, 25, 28, 255});  // letterbox around the centered board
         BeginMode2D(camera);
         {
             bool inGame = (screen == SCREEN::SCR_GAME);
+
+            // 4-player mode delegates the whole board scene to FourGame.
+            if (fourPlayer) {
+                four->Render(textures, inGame);
+            } else {
 
             std::vector<Move> movesOfSelectedPiece;
             if (selectedPiece) {
@@ -189,6 +202,8 @@ void Game::Run() {
                 Renderer::RenderEndScreen(state);
             }
 
+            }  // end classic-board branch
+
             // Menu overlays.
             if (screen == SCREEN::SCR_MAIN) {
                 std::vector<std::string> lines = {
@@ -199,6 +214,14 @@ void Game::Run() {
                     "Salir",
                 };
                 Renderer::RenderMenu("RayChess", lines, menuIndex, "");
+            } else if (screen == SCREEN::SCR_MODESEL) {
+                std::vector<std::string> lines = {
+                    "Clasico (2 jugadores)",
+                    "4 jugadores - Todos contra todos",
+                    "4 jugadores - Equipos",
+                    "Volver",
+                };
+                Renderer::RenderMenu("Modo de juego", lines, menuIndex, "");
             } else if (screen == SCREEN::SCR_PAUSE) {
                 std::vector<std::string> lines = {
                     "Reanudar juego en curso",
@@ -245,7 +268,67 @@ void Game::Run() {
 
 // --- Per-screen frame handlers ---------------------------------------------
 
+void Game::HandleModeSelect() {
+    const int COUNT = 4;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_UP, false))   menuIndex = (menuIndex + COUNT - 1) % COUNT;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN, false)) menuIndex = (menuIndex + 1) % COUNT;
+
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false)) {  // Cross
+        if (menuIndex == 0) {          // Clasico (2 players) -> existing flow
+            gameMode = MODE_CLASSIC;
+            four.reset();
+            assignReturnsToGame = false;
+            screen = SCREEN::SCR_ASSIGN;
+            menuIndex = 0;
+        } else if (menuIndex == 1) {   // 4 players, free-for-all
+            StartFourGame(FOUR_FFA);
+        } else if (menuIndex == 2) {   // 4 players, teams
+            StartFourGame(FOUR_TEAMS);
+        } else {                       // Volver
+            screen = SCREEN::SCR_MAIN;
+            menuIndex = 0;
+        }
+    }
+
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, false)) {  // Circle backs out
+        screen = SCREEN::SCR_MAIN;
+        menuIndex = 0;
+    }
+}
+
+void Game::StartFourGame(FourMode fourMode) {
+    gameMode = (fourMode == FOUR_FFA) ? MODE_4P_FFA : MODE_4P_TEAMS;
+    four.reset(new FourGame(fourMode));
+    hasGame = true;
+    screen = SCREEN::SCR_GAME;
+    menuIndex = 0;
+}
+
 void Game::HandleGameFrame() {
+    // 4-player mode: START pauses, and the cursor moves over the board. Moves/turns
+    // are M2; for now any pad drives the cursor.
+    if (gameMode != MODE_CLASSIC && four) {
+        if (padPressed(GAMEPAD_BUTTON_MIDDLE_RIGHT, false)) {
+            screen = SCREEN::SCR_PAUSE;
+            menuIndex = 0;
+            return;
+        }
+        const float DZ = 0.5f;
+        bool dir[4];
+        dir[0] = padDown(GAMEPAD_BUTTON_LEFT_FACE_UP, false)    || padAxis(GAMEPAD_AXIS_LEFT_Y, false) < -DZ;
+        dir[1] = padDown(GAMEPAD_BUTTON_LEFT_FACE_DOWN, false)  || padAxis(GAMEPAD_AXIS_LEFT_Y, false) >  DZ;
+        dir[2] = padDown(GAMEPAD_BUTTON_LEFT_FACE_LEFT, false)  || padAxis(GAMEPAD_AXIS_LEFT_X, false) < -DZ;
+        dir[3] = padDown(GAMEPAD_BUTTON_LEFT_FACE_RIGHT, false) || padAxis(GAMEPAD_AXIS_LEFT_X, false) >  DZ;
+        int di = 0, dj = 0;
+        if (dir[0] && !dirPrev[0]) di -= 1;
+        if (dir[1] && !dirPrev[1]) di += 1;
+        if (dir[2] && !dirPrev[2]) dj -= 1;
+        if (dir[3] && !dirPrev[3]) dj += 1;
+        if (di || dj) four->MoveCursor(di, dj);
+        for (int k = 0; k < 4; k++) dirPrev[k] = dir[k];
+        return;
+    }
+
     // START opens the pause menu; Select does nothing.
     if (padPressed(GAMEPAD_BUTTON_MIDDLE_RIGHT, false)) {
         screen = SCREEN::SCR_PAUSE;
@@ -279,9 +362,8 @@ void Game::HandleMainMenu() {
     if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN, false)) menuIndex = (menuIndex + 1) % COUNT;
 
     if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false)) {  // Cross
-        if (menuIndex == 0) {                 // Nueva Partida
-            assignReturnsToGame = false;
-            screen = SCREEN::SCR_ASSIGN;
+        if (menuIndex == 0) {                 // Nueva Partida -> choose mode
+            screen = SCREEN::SCR_MODESEL;
             menuIndex = 0;
         } else if (menuIndex == 1) {          // Reanudar Partida
             if (hasGame) { screen = SCREEN::SCR_GAME; }
@@ -309,23 +391,27 @@ void Game::HandlePauseMenu() {
         SaveSettings();
     }
 
+    bool classic = (gameMode == MODE_CLASSIC);
     if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false)) {  // Cross
         if (menuIndex == 0) {                 // Reanudar juego en curso
             screen = SCREEN::SCR_GAME;
-        } else if (menuIndex == 1) {          // Guardar partida
-            StartSaveGame();
-        } else if (menuIndex == 2) {          // Cargar partida
-            StartLoadGame();
-        } else if (menuIndex == 3) {          // Cambiar equipo
-            assignReturnsToGame = true;
-            screen = SCREEN::SCR_ASSIGN;
-            menuIndex = 0;
+        } else if (menuIndex == 1) {          // Guardar partida (classic only for now)
+            if (classic) StartSaveGame();
+        } else if (menuIndex == 2) {          // Cargar partida (classic only for now)
+            if (classic) StartLoadGame();
+        } else if (menuIndex == 3) {          // Cambiar equipo (classic assignment; 4P is M2)
+            if (classic) {
+                assignReturnsToGame = true;
+                screen = SCREEN::SCR_ASSIGN;
+                menuIndex = 0;
+            }
         } else if (menuIndex == 4) {          // Auto-invertir (also toggles on Cross)
             autoFlip = !autoFlip;
             if (autoFlip) ApplyAutoFlip();
             SaveSettings();
         } else if (menuIndex == 5) {          // Reiniciar partida
-            Reset();
+            if (classic) { Reset(); }
+            else         { four.reset(new FourGame(four->Mode())); }
             hasGame = true;
             screen = SCREEN::SCR_GAME;
         } else {                              // Salir a menu principal

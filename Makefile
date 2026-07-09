@@ -28,7 +28,7 @@ include $(PSL1GHT)/ppu_rules
 #---------------------------------------------------------------------------------
 TARGET		:=	$(notdir $(CURDIR))
 BUILD		:=	build
-SOURCES		:=	source source/pieces
+SOURCES		:=	source source/pieces source/four
 DATA		:=	data
 INCLUDES	:=	include
 PKGFILES	:=	pkgfiles

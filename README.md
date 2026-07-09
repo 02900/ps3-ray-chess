@@ -145,6 +145,12 @@ ps3-ray-chess/
   **captured pieces** with a material-advantage readout (right); the **last move's** from/to squares
   are highlighted. All three follow L1/R1 history and ride along with saves (per-snapshot SAN +
   captured piece, save format v2). (SAN omits disambiguation for the rare two-pieces-same-square case.)
+- **4-player chess** *(in progress — M1)*: a new mode (chess.com 4PC) built as a **self-contained
+  `source/four/` engine** (14×14 board, four 3×3 corners removed, four armies tinted red/blue/yellow/
+  green from the white silhouettes), routed via a **mode-select menu** (*Clásico* / *4 jugadores FFA*
+  / *Equipos*). M1 renders the starting position + a cursor; moves, turns, check/elimination, the FFA
+  points system and Teams win condition, castling/en-passant follow in M2–M5. The classic game is
+  untouched.
 
 ## Credits & license
 

@@ -4,11 +4,13 @@
 #include <string>
 #include <map>
 #include <vector>
+#include <memory>
 
 #include "pieces/Piece.h"
 #include "Board.h"
 #include "raylib.h"
 #include "Move.h"
+#include "four/FourGame.h"
 
 enum GAME_STATE {
     S_RUNNING,
@@ -21,12 +23,16 @@ enum GAME_STATE {
 // Top-level screens. The board always renders as a backdrop; menus overlay it.
 enum SCREEN {
     SCR_MAIN,     // Nueva Partida / Reanudar / Cargar / Opciones / Salir
+    SCR_MODESEL,  // choose the game mode (Clásico / 4 jugadores FFA / Equipos)
     SCR_ASSIGN,   // controller-to-side selection
     SCR_OPTIONS,  // Ritmo / Jugador 1 / Auto-invertir
     SCR_PAUSE,    // in-game pause menu (START)
     SCR_GAME,     // playing
     SCR_SAVEBUSY  // the XMB Saved Data Utility dialog is running (on a thread)
 };
+
+// Which game is running in SCR_GAME.
+enum GameMode { MODE_CLASSIC, MODE_4P_FFA, MODE_4P_TEAMS };
 
 class Game {
 public:
@@ -80,10 +86,12 @@ private:
     // Per-screen frame handlers.
     void HandleGameFrame();
     void HandleMainMenu();
+    void HandleModeSelect();
     void HandlePauseMenu();
     void HandleOptionsMenu();
     void HandleAssignMenu();
     void HandleSaveBusy();      // poll the savedata thread; apply a loaded game
+    void StartFourGame(FourMode fourMode);  // create + enter a 4-player game
 
     // XMB Saved Data Utility (save/load a full game, incl. move history).
     void StartSaveGame();
@@ -179,6 +187,11 @@ private:
     bool hasGame = false;           // enables "Reanudar Partida"
     bool assignReturnsToGame = false; // Cambiar equipo (true) vs Nueva Partida (false)
     bool quitRequested = false;     // set by the main menu's "Salir"
+
+    // Game mode. Classic uses the 2-player engine below; the 4-player modes run
+    // a self-contained FourGame that SCR_GAME delegates to.
+    GameMode gameMode = MODE_CLASSIC;
+    std::unique_ptr<FourGame> four;
 
     // Save/load (XMB Saved Data Utility).
     bool saveBusyIsLoad = false;    // the running dialog is a load (vs save)
