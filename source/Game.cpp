@@ -3,6 +3,7 @@
 #include "raylib.h"
 #include "Renderer.h"
 #include "audio.h"
+#include "compat.h"  // compat::to_string (PS3 newlib lacks std::to_string)
 #include "pieces/Queen.h"
 #include "pieces/Knight.h"
 #include "pieces/Bishop.h"
@@ -92,41 +93,17 @@ void Game::Run() {
     camera.zoom = 1.0f;
 
     while (!WindowShouldClose()){
-        // Quit to the XMB on Start (WindowShouldClose also catches the system exit).
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_MIDDLE_RIGHT)) {
-            break;
-        }
-
         audio_update();  // drive MikMod's software mixer
 
-        // Select toggles the settings menu (pauses play while open).
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_MIDDLE_LEFT)) {
-            menuOpen = !menuOpen;
-            menuIndex = 0;
+        // Per-screen input.
+        switch (screen) {
+            case SCREEN::SCR_GAME:    HandleGameFrame();  break;
+            case SCREEN::SCR_MAIN:    HandleMainMenu();    break;
+            case SCREEN::SCR_PAUSE:   HandlePauseMenu();   break;
+            case SCREEN::SCR_OPTIONS: HandleOptionsMenu(); break;
+            case SCREEN::SCR_ASSIGN:  HandleAssignMenu();  break;
         }
-
-        if (menuOpen) {
-            HandleMenuInput();
-        } else {
-            // Triangle flips the board view. L1 / R1 step back / forward through the
-            // move history (no confirmation); these work even after the game ends.
-            if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_UP)) ToggleFlip();
-            if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_TRIGGER_1))  HistoryBack();
-            if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_TRIGGER_1)) HistoryForward();
-
-            if (state == GAME_STATE::S_RUNNING) {
-                HandleInput();
-
-                // The clock only runs on the live position (not while reviewing history).
-                if (clockActive && AtLiveTip()) {
-                    UpdateClocks();
-                } else if (!clockActive) {
-                    time += GetFrameTime();  // free-running counter when there's no clock
-                }
-            } else if (state == GAME_STATE::S_PROMOTION) {
-                HandleInputPromotion();
-            }
-        }
+        if (quitRequested) break;  // main-menu "Salir"
 
         // Render.
         Renderer::SetFlipped(flipped);
@@ -134,58 +111,85 @@ void Game::Run() {
         ClearBackground(Color{25, 25, 28, 255});  // letterbox around the centered board
         BeginMode2D(camera);
         {
-            std::vector<Move> movesOfSelectedPiece;
+            bool inGame = (screen == SCREEN::SCR_GAME);
 
+            std::vector<Move> movesOfSelectedPiece;
             if (selectedPiece) {
                 movesOfSelectedPiece = possibleMovesPerPiece.at(selectedPiece);
             }
 
-            // The 8x8 board + info bar fully cover the canvas, so no per-frame clear
-            // of the canvas is needed (Renderer::Clear would repaint the whole screen).
+            // The board scene is always drawn as a backdrop; the play affordances
+            // (selection, move dots, cursor, promotion/end overlays) show only in-game.
             Renderer::RenderBackground();
 
-            // Highlight the selected piece's square underneath the pieces.
-            if (state == GAME_STATE::S_RUNNING && selectedPiece != nullptr) {
+            if (inGame && state == GAME_STATE::S_RUNNING && selectedPiece != nullptr) {
                 Renderer::RenderSelection(selectedPiece->GetPosition());
             }
 
             Renderer::RenderPieces(board, textures);
 
-            if (state != GAME_STATE::S_PROMOTION) {
+            if (inGame && state != GAME_STATE::S_PROMOTION) {
                 Renderer::RenderMovesSelectedPiece(textures, movesOfSelectedPiece);
             }
 
-            // The gamepad cursor sits on top of the board (hidden while in the menu).
-            if (state == GAME_STATE::S_RUNNING && !menuOpen) {
+            if (inGame && state == GAME_STATE::S_RUNNING) {
                 Renderer::RenderCursor(cursor);
             }
 
             Renderer::RenderGuideText();
             Renderer::RenderInfoBar(round, time, clockActive, whiteClock, blackClock, player1IsWhite);
 
-            // Render promotion screen (with the highlighted option).
-            if (state == GAME_STATE::S_PROMOTION) {
+            if (inGame && state == GAME_STATE::S_PROMOTION) {
                 Renderer::RenderPromotionScreen(textures, selectedPiece->color);
                 Renderer::RenderPromotionCursor(promotionChoice);
             }
 
-            // Render end-game screen (checkmate or stalemate).
-            if (state == GAME_STATE::S_WHITE_WINS ||
-                state == GAME_STATE::S_BLACK_WINS ||
-                state == GAME_STATE::S_STALEMATE) {
+            if (inGame && (state == GAME_STATE::S_WHITE_WINS ||
+                           state == GAME_STATE::S_BLACK_WINS ||
+                           state == GAME_STATE::S_STALEMATE)) {
                 Renderer::RenderEndScreen(state);
             }
 
-            // The settings menu overlays everything.
-            if (menuOpen) {
+            // Menu overlays.
+            if (screen == SCREEN::SCR_MAIN) {
+                std::vector<std::string> lines = {
+                    "Nueva Partida",
+                    std::string("Reanudar Partida") + (hasGame ? "" : " (sin partida)"),
+                    "Opciones",
+                    "Salir",
+                };
+                Renderer::RenderMenu("RayChess", lines, menuIndex, "");
+            } else if (screen == SCREEN::SCR_PAUSE) {
+                std::vector<std::string> lines = {
+                    "Reanudar juego en curso",
+                    "Cambiar equipo",
+                    "Auto-invertir: " + std::string(autoFlip ? "Si" : "No"),
+                    "Reiniciar partida",
+                    "Salir a menu principal",
+                };
+                Renderer::RenderMenu("Pausa", lines, menuIndex, "");
+            } else if (screen == SCREEN::SCR_OPTIONS) {
                 std::vector<std::string> lines = {
                     "Ritmo: " + std::string(TIME_CONTROLS[timeControlIndex].label),
                     "Jugador 1: " + std::string(player1IsWhite ? "Blancas" : "Negras"),
                     "Auto-invertir: " + std::string(autoFlip ? "Si" : "No"),
-                    "Reiniciar partida",
-                    "Reanudar",
+                    "Volver",
                 };
-                Renderer::RenderMenu(lines, menuIndex);
+                Renderer::RenderMenu("Opciones", lines, menuIndex, "");
+            } else if (screen == SCREEN::SCR_ASSIGN) {
+                int pads[4];
+                int n = listAvailablePads(pads);
+                std::vector<std::string> lines;
+                for (int k = 0; k < n; k++) {
+                    lines.push_back("Mando " + compat::to_string(pads[k] + 1) + ": " +
+                                    (padSide[pads[k]] == PIECE_COLOR::C_WHITE ? "Blancas" : "Negras"));
+                }
+                lines.push_back(assignReturnsToGame ? "Aceptar" : "Comenzar");
+
+                std::string footer = "Detectados: " + compat::to_string(n) +
+                    "/4. Un bando sin mando lo controla cualquiera.";
+                Renderer::RenderMenu(assignReturnsToGame ? "Cambiar equipo" : "Seleccion de mandos",
+                                     lines, menuIndex, footer);
             }
         }
         EndMode2D();
@@ -193,18 +197,222 @@ void Game::Run() {
     }
 }
 
+// --- Per-screen frame handlers ---------------------------------------------
+
+void Game::HandleGameFrame() {
+    // START opens the pause menu; Select does nothing.
+    if (padPressed(GAMEPAD_BUTTON_MIDDLE_RIGHT, false)) {
+        screen = SCREEN::SCR_PAUSE;
+        menuIndex = 0;
+        return;
+    }
+
+    // Triangle flips the board; L1/R1 step through history (any pad, even after game over).
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_UP, false)) ToggleFlip();
+    if (padPressed(GAMEPAD_BUTTON_LEFT_TRIGGER_1, false))  HistoryBack();
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_TRIGGER_1, false)) HistoryForward();
+
+    if (state == GAME_STATE::S_RUNNING) {
+        HandleInput();
+
+        // The clock only runs on the live position (not while reviewing history).
+        if (clockActive && AtLiveTip()) {
+            UpdateClocks();
+        } else if (!clockActive) {
+            time += GetFrameTime();  // free-running counter when there's no clock
+        }
+    } else if (state == GAME_STATE::S_PROMOTION) {
+        HandleInputPromotion();
+    }
+}
+
+// Shared menu navigation: returns the row delta / actions via out-params.
+void Game::HandleMainMenu() {
+    const int COUNT = 4;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_UP, false))   menuIndex = (menuIndex + COUNT - 1) % COUNT;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN, false)) menuIndex = (menuIndex + 1) % COUNT;
+
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false)) {  // Cross
+        if (menuIndex == 0) {                 // Nueva Partida
+            assignReturnsToGame = false;
+            screen = SCREEN::SCR_ASSIGN;
+            menuIndex = 0;
+        } else if (menuIndex == 1) {          // Reanudar Partida
+            if (hasGame) { screen = SCREEN::SCR_GAME; }
+        } else if (menuIndex == 2) {          // Opciones
+            screen = SCREEN::SCR_OPTIONS;
+            menuIndex = 0;
+        } else {                              // Salir
+            quitRequested = true;
+        }
+    }
+}
+
+void Game::HandlePauseMenu() {
+    const int COUNT = 5;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_UP, false))   menuIndex = (menuIndex + COUNT - 1) % COUNT;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN, false)) menuIndex = (menuIndex + 1) % COUNT;
+
+    // Auto-invertir toggles with Left/Right on its row.
+    if (menuIndex == 2 && (padPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT, false) ||
+                           padPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT, false))) {
+        autoFlip = !autoFlip;
+        if (autoFlip) ApplyAutoFlip();
+    }
+
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false)) {  // Cross
+        if (menuIndex == 0) {                 // Reanudar juego en curso
+            screen = SCREEN::SCR_GAME;
+        } else if (menuIndex == 1) {          // Cambiar equipo
+            assignReturnsToGame = true;
+            screen = SCREEN::SCR_ASSIGN;
+            menuIndex = 0;
+        } else if (menuIndex == 2) {          // Auto-invertir (also toggles on Cross)
+            autoFlip = !autoFlip;
+            if (autoFlip) ApplyAutoFlip();
+        } else if (menuIndex == 3) {          // Reiniciar partida
+            Reset();
+            hasGame = true;
+            screen = SCREEN::SCR_GAME;
+        } else {                              // Salir a menu principal
+            screen = SCREEN::SCR_MAIN;
+            menuIndex = 0;
+        }
+    }
+
+    // Circle resumes the game.
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, false)) {
+        screen = SCREEN::SCR_GAME;
+    }
+}
+
+void Game::HandleOptionsMenu() {
+    const int COUNT = 4;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_UP, false))   menuIndex = (menuIndex + COUNT - 1) % COUNT;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN, false)) menuIndex = (menuIndex + 1) % COUNT;
+
+    int delta = 0;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT, false))  delta = -1;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT, false)) delta = +1;
+
+    if (delta != 0) {
+        if (menuIndex == 0) {                 // Ritmo
+            timeControlIndex = (timeControlIndex + delta + TIME_CONTROL_COUNT) % TIME_CONTROL_COUNT;
+            ApplyTimeControl();
+        } else if (menuIndex == 1) {          // Jugador 1 colour label
+            player1IsWhite = !player1IsWhite;
+        } else if (menuIndex == 2) {          // Auto-invertir
+            autoFlip = !autoFlip;
+            if (autoFlip) ApplyAutoFlip();
+        }
+    }
+
+    // Cross on "Volver", or Circle, returns to the main menu.
+    if ((padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false) && menuIndex == 3) ||
+         padPressed(GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, false)) {
+        screen = SCREEN::SCR_MAIN;
+        menuIndex = 0;
+    }
+}
+
+void Game::HandleAssignMenu() {
+    int pads[4];
+    int n = listAvailablePads(pads);
+    int count = n + 1;  // pad rows + the action row
+
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_UP, false))   menuIndex = (menuIndex + count - 1) % count;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_DOWN, false)) menuIndex = (menuIndex + 1) % count;
+    if (menuIndex >= count) menuIndex = count - 1;  // pads may have (dis)connected
+
+    // On a pad row, Left/Right toggles that pad's side.
+    if (menuIndex < n && (padPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT, false) ||
+                          padPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT, false))) {
+        int p = pads[menuIndex];
+        padSide[p] = (padSide[p] == PIECE_COLOR::C_WHITE) ? PIECE_COLOR::C_BLACK : PIECE_COLOR::C_WHITE;
+    }
+
+    // Cross on the action row.
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false) && menuIndex == n) {
+        if (assignReturnsToGame) {            // Cambiar equipo -> back to the live game
+            screen = SCREEN::SCR_GAME;
+        } else {                              // Nueva Partida -> start a fresh game
+            Reset();
+            hasGame = true;
+            screen = SCREEN::SCR_GAME;
+        }
+        menuIndex = 0;
+    }
+
+    // Circle backs out (to game if reassigning, else to the main menu).
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, false)) {
+        screen = assignReturnsToGame ? SCREEN::SCR_GAME : SCREEN::SCR_MAIN;
+        menuIndex = 0;
+    }
+}
+
+// --- Multi-controller input -------------------------------------------------
+
+int Game::listAvailablePads(int out[4]) const {
+    int n = 0;
+    for (int i = 0; i < 4; i++) {
+        if (IsGamepadAvailable(i)) out[n++] = i;
+    }
+    return n;
+}
+
+bool Game::padCountsForTurn(int i) const {
+    if (!IsGamepadAvailable(i)) return false;
+
+    // Does any connected pad belong to the side to move?
+    bool sideHasPad = false;
+    for (int k = 0; k < 4; k++) {
+        if (IsGamepadAvailable(k) && padSide[k] == turn) { sideHasPad = true; break; }
+    }
+    // If a side has no pad of its own, any connected pad may move it (covers the
+    // single-controller case, which then drives both sides).
+    return sideHasPad ? (padSide[i] == turn) : true;
+}
+
+bool Game::padPressed(int button, bool turnOnly) const {
+    for (int i = 0; i < 4; i++) {
+        bool include = turnOnly ? padCountsForTurn(i) : IsGamepadAvailable(i);
+        if (include && IsGamepadButtonPressed(i, button)) return true;
+    }
+    return false;
+}
+
+bool Game::padDown(int button, bool turnOnly) const {
+    for (int i = 0; i < 4; i++) {
+        bool include = turnOnly ? padCountsForTurn(i) : IsGamepadAvailable(i);
+        if (include && IsGamepadButtonDown(i, button)) return true;
+    }
+    return false;
+}
+
+float Game::padAxis(int axis, bool turnOnly) const {
+    float best = 0.0f;
+    for (int i = 0; i < 4; i++) {
+        bool include = turnOnly ? padCountsForTurn(i) : IsGamepadAvailable(i);
+        if (!include) continue;
+        float v = GetGamepadAxisMovement(i, axis);
+        if ((v < 0 ? -v : v) > (best < 0 ? -best : best)) best = v;
+    }
+    return best;
+}
+
 // Move the board cursor one cell per press from the D-pad or the left stick.
 // Edge-triggered (via dirPrev) so a held direction doesn't skate across the board.
+// Only the pads that may move the side to move are read.
 void Game::UpdateCursor() {
     const float DZ = 0.5f;  // analog dead-zone
-    float ax = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
-    float ay = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
+    float ax = padAxis(GAMEPAD_AXIS_LEFT_X, true);
+    float ay = padAxis(GAMEPAD_AXIS_LEFT_Y, true);
 
     bool dir[4];
-    dir[0] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_UP)    || ay < -DZ; // screen up
-    dir[1] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN)  || ay >  DZ; // screen down
-    dir[2] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  || ax < -DZ; // screen left
-    dir[3] = IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || ax >  DZ; // screen right
+    dir[0] = padDown(GAMEPAD_BUTTON_LEFT_FACE_UP, true)    || ay < -DZ; // screen up
+    dir[1] = padDown(GAMEPAD_BUTTON_LEFT_FACE_DOWN, true)  || ay >  DZ; // screen down
+    dir[2] = padDown(GAMEPAD_BUTTON_LEFT_FACE_LEFT, true)  || ax < -DZ; // screen left
+    dir[3] = padDown(GAMEPAD_BUTTON_LEFT_FACE_RIGHT, true) || ax >  DZ; // screen right
 
     // Translate screen-space intent into board deltas. When flipped, screen up = higher
     // board row, so both axes invert.
@@ -225,13 +433,13 @@ void Game::HandleInput() {
     UpdateCursor();
 
     // Circle cancels the current selection.
-    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) {
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, true)) {
         selectedPiece = nullptr;
         return;
     }
 
     // Cross acts on the cursor cell — the same select/move logic the mouse drove.
-    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) {
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, true)) {
         Position clickedPosition = cursor;
         Piece* clickedPiece = board.At(clickedPosition);
 
@@ -263,11 +471,11 @@ void Game::HandleInput() {
 
 void Game::HandleInputPromotion() {
     // Left/Right move through the four options (Queen, Rook, Bishop, Knight).
-    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  && promotionChoice > 0) promotionChoice--;
-    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) && promotionChoice < 3) promotionChoice++;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_LEFT, true)  && promotionChoice > 0) promotionChoice--;
+    if (padPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT, true) && promotionChoice < 3) promotionChoice++;
 
     // Cross confirms the highlighted option.
-    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) {
+    if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, true)) {
         audio_play_click();
         Position pos = selectedPiece->GetPosition();
         PIECE_COLOR color = selectedPiece->color;
@@ -562,42 +770,3 @@ void Game::HistoryForward() {
     }
 }
 
-// --- Settings menu ----------------------------------------------------------
-
-void Game::HandleMenuInput() {
-    const int MENU_COUNT = 5;
-
-    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_UP))   menuIndex = (menuIndex + MENU_COUNT - 1) % MENU_COUNT;
-    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN)) menuIndex = (menuIndex + 1) % MENU_COUNT;
-
-    int delta = 0;
-    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT))  delta = -1;
-    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) delta = +1;
-
-    if (delta != 0) {
-        if (menuIndex == 0) {          // time control
-            timeControlIndex = (timeControlIndex + delta + TIME_CONTROL_COUNT) % TIME_CONTROL_COUNT;
-            ApplyTimeControl();        // changing the pace resets the clocks
-        } else if (menuIndex == 1) {   // which colour is Jugador 1 (labels)
-            player1IsWhite = !player1IsWhite;
-        } else if (menuIndex == 2) {   // auto-flip
-            autoFlip = !autoFlip;
-            if (autoFlip) ApplyAutoFlip();
-        }
-    }
-
-    // Cross activates the action rows.
-    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) {
-        if (menuIndex == 3) {          // restart
-            Reset();
-            menuOpen = false;
-        } else if (menuIndex == 4) {   // resume
-            menuOpen = false;
-        }
-    }
-
-    // Circle also closes the menu.
-    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) {
-        menuOpen = false;
-    }
-}

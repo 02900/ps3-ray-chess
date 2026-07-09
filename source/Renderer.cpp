@@ -167,13 +167,13 @@ void Renderer::RenderInfoBar(int round, double time, bool clockActive, double wh
     DrawText(centerText.c_str(), Game::WINDOW_WIDTH / 2 - cw / 2, y, 20, GRAY);
 }
 
-void Renderer::RenderMenu(const std::vector<std::string>& lines, int selected) {
+void Renderer::RenderMenu(const std::string& title, const std::vector<std::string>& lines, int selected, const std::string& footer) {
     // Dim the whole board behind the panel.
     DrawRectangle(0, 0, Game::WINDOW_WIDTH, Game::WINDOW_HEIGHT, Color{0, 0, 0, 160});
 
     int rowH = 44;
-    int panelW = 400;
-    int panelH = 80 + (int) lines.size() * rowH;
+    int panelW = 440;
+    int panelH = 96 + (int) lines.size() * rowH;
     int px = Game::WINDOW_WIDTH / 2 - panelW / 2;
     int py = Game::WINDOW_HEIGHT / 2 - panelH / 2;
 
@@ -181,7 +181,7 @@ void Renderer::RenderMenu(const std::vector<std::string>& lines, int selected) {
     Rectangle border = { (float) px, (float) py, (float) panelW, (float) panelH };
     DrawRectangleLinesEx(border, 2, Color{255, 205, 0, 255});
 
-    DrawText("Ajustes", px + 20, py + 16, 28, WHITE);
+    DrawText(title.c_str(), px + 20, py + 16, 28, WHITE);
 
     int y0 = py + 60;
     for (int i = 0; i < (int) lines.size(); i++) {
@@ -192,8 +192,10 @@ void Renderer::RenderMenu(const std::vector<std::string>& lines, int selected) {
         DrawText(lines[i].c_str(), px + 24, ry, 22, WHITE);
     }
 
-    DrawText("D-pad mover  Izq/Der cambiar  Cross elegir  O/Select cerrar",
-             px + 16, py + panelH - 26, 13, GRAY);
+    const char* hint = footer.empty()
+        ? "D-pad mover  Izq/Der cambiar  Cross elegir  O volver"
+        : footer.c_str();
+    DrawText(hint, px + 16, py + panelH - 26, 13, GRAY);
 }
 
 void Renderer::RenderEndScreen(GAME_STATE state) {

@@ -15,7 +15,7 @@ public:
     static void RenderPromotionScreen(const std::map<std::string, Texture>& textures, PIECE_COLOR colorOfPeonBeingPromoted);
     static void RenderInfoBar(int round, double time, bool clockActive, double whiteClock, double blackClock, bool player1IsWhite);
     static void RenderEndScreen(GAME_STATE state);
-    static void RenderMenu(const std::vector<std::string>& lines, int selected);
+    static void RenderMenu(const std::string& title, const std::vector<std::string>& lines, int selected, const std::string& footer);
     static void ChangeMouseCursor(const Board& board, const std::vector<Move>& possibleMoves, PIECE_COLOR turn, bool inPromotion);
 
     // PS3 gamepad affordances (replace the desktop mouse cursor).

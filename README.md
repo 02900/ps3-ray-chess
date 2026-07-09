@@ -66,24 +66,29 @@ Via the Docker helper the outputs are named after the `/src` mount: `src.elf` / 
 - **RPCS3:** boot `ps3-ray-chess.self` directly, or *File → Install .pkg* → pick the `.pkg` → launch **RayChess**.
 - **Real PS3 (HEN/CFW):** install the `.pkg` from the XMB, or `ps3load` the `.self`.
 
-**Controls:**
+**Menus.** The game opens on a **main menu** — *Nueva Partida*, *Reanudar Partida*, *Opciones*,
+*Salir*. In-game, **Start** opens the **pause menu** (*Reanudar juego en curso*, *Cambiar equipo*,
+*Auto-invertir*, *Reiniciar partida*, *Salir a menú principal*). **Select does nothing.** Quit to the
+XMB from the main menu's **Salir**. *Opciones* holds the Fischer time control (*Sin reloj / 3|2 / 5|3
+/ 10|5*; running out of time loses), which colour is **Jugador 1** (info-bar label), and **auto-flip**.
+Menu navigation: D-pad up/down move, left/right change a value, **Cross** activates, **Circle** backs out.
+
+**Multi-controller.** *Nueva Partida* (and *Cambiar equipo* in the pause menu) opens a controller
+screen listing the **powered-on pads** (up to 4). Assign each pad to **Blancas** or **Negras** — on a
+side's turn, only that side's pads can move. **A side with no assigned pad is controlled by any pad**,
+so a single controller drives both sides (as before); pads that aren't detected are noted on the screen.
+
+**In-game controls:**
 
 | Button | Action |
 |--------|--------|
 | D-pad / left stick | move the cursor over the squares |
-| **Cross** | select a piece / play the move on the cursor square (also confirms menu actions) |
-| **Circle** | cancel the selection (also closes the menu) |
+| **Cross** | select a piece / play the move on the cursor square |
+| **Circle** | cancel the selection |
 | **Triangle** | flip the board view |
 | **L1 / R1** | step back / forward through the move history (no confirmation; playing a move from a past position starts a new line) |
-| **Select** | open / close the settings menu |
-| **Start** | quit to the XMB |
-| in the menu | D-pad up/down to move, left/right to change a value, **Cross** to restart / resume |
+| **Start** | open the pause menu |
 | in a promotion | **Left/Right** pick Queen/Rook/Bishop/Knight, **Cross** confirms |
-
-**Settings menu (Select):** game pace / clock — Fischer time controls (*Sin reloj*, *3|2*, *5|3*,
-*10|5*; running out of time loses); which colour is **Jugador 1** (shown in the info bar); and
-**auto-flip** (turn the board on every move so the side to move is at the bottom). Plus **Reiniciar
-partida** to restart.
 
 ## Project structure
 
@@ -115,10 +120,15 @@ ps3-ray-chess/
   (`source/audio.c` — `Sample_LoadGeneric` over the embedded WAV bytes), played on
   select / move / invalid / promotion; the stalemate end screen now renders; and the board
   coordinates read as standard algebra (files a→h left to right, rank 1 at white's home row).
-- **Extras** *(done)*: a **settings menu** (Select) with Fischer time controls, Jugador 1/2 labels,
-  and auto-flip, plus **Reiniciar partida**; **board flip** on Triangle; **move history** on L1/R1
-  with branch-on-new-move (undo/redo over full-position snapshots); a per-side **Fischer clock**
-  (flag-fall loses); and synthesized **check** and **checkmate/victory** cues.
+- **Extras** *(done)*: Fischer time controls, Jugador 1/2 labels, auto-flip; **board flip** on
+  Triangle; **move history** on L1/R1 with branch-on-new-move (undo/redo over full-position
+  snapshots); a per-side **Fischer clock** (flag-fall loses); synthesized **check** and
+  **checkmate/victory** cues.
+- **Menus + multi-controller** *(done)*: a **main menu** (Nueva Partida / Reanudar / Opciones /
+  Salir) and an in-game **pause menu** (Start); the former settings moved to *Opciones*. Up to **4
+  controllers**: assign each pad to a side (only that side's pads move it; a side with no pad is
+  driven by any pad, so one controller still runs the whole game).
+- **Deferred**: persisting *Opciones* to the PS3 disk (settings currently reset each launch).
 
 ## Credits & license
 

@@ -18,6 +18,15 @@ enum GAME_STATE {
     S_STALEMATE
 };
 
+// Top-level screens. The board always renders as a backdrop; menus overlay it.
+enum SCREEN {
+    SCR_MAIN,     // Nueva Partida / Reanudar / Opciones / Salir
+    SCR_ASSIGN,   // controller-to-side selection
+    SCR_OPTIONS,  // Ritmo / Jugador 1 / Auto-invertir
+    SCR_PAUSE,    // in-game pause menu (START)
+    SCR_GAME      // playing
+};
+
 class Game {
 public:
     // PS3 output resolution. The original 640x672 game is drawn into a virtual
@@ -55,9 +64,24 @@ private:
     void UpdateCursor();       // move the board cursor from the D-pad / left stick
     void HandleInput();
     void HandleInputPromotion();
-    void HandleMenuInput();
     Move* GetMoveAtPosition(const Position& position);
     void DoMoveOnBoard(const Move& move);
+
+    // Multi-controller input. `turnOnly` restricts to the pads that may move the side
+    // to move (a side with no assigned pad is controlled by any pad); otherwise reads
+    // every connected pad (menus, pause, flip, history).
+    bool padCountsForTurn(int i) const;
+    bool padPressed(int button, bool turnOnly) const;
+    bool padDown(int button, bool turnOnly) const;
+    float padAxis(int axis, bool turnOnly) const;
+    int listAvailablePads(int out[4]) const;  // fills connected pad indices, returns count
+
+    // Per-screen frame handlers.
+    void HandleGameFrame();
+    void HandleMainMenu();
+    void HandlePauseMenu();
+    void HandleOptionsMenu();
+    void HandleAssignMenu();
 
     void CalculateAllPossibleMovements();
     void CheckForEndOfGame();
@@ -109,15 +133,24 @@ private:
     bool dirPrev[4] = {false, false, false, false};
     int promotionChoice = 0;
 
-    // Settings (edited in the Select menu).
+    // Settings (edited in Opciones).
     int timeControlIndex = 0;   // index into TIME_CONTROLS
     bool player1IsWhite = true; // info-bar labels: which colour is "Jugador 1"
     bool autoFlip = false;      // flip the board on every turn change
 
-    // View / menu.
-    bool flipped = false;       // black at the bottom when true
-    bool menuOpen = false;
+    // Controller assignment: which side each pad index (0..3) controls.
+    PIECE_COLOR padSide[4] = { PIECE_COLOR::C_WHITE, PIECE_COLOR::C_BLACK,
+                               PIECE_COLOR::C_WHITE, PIECE_COLOR::C_BLACK };
+
+    // Screens / menus.
+    SCREEN screen = SCREEN::SCR_MAIN;
     int menuIndex = 0;
+    bool hasGame = false;           // enables "Reanudar Partida"
+    bool assignReturnsToGame = false; // Cambiar equipo (true) vs Nueva Partida (false)
+    bool quitRequested = false;     // set by the main menu's "Salir"
+
+    // View.
+    bool flipped = false;       // black at the bottom when true
 
     // Clocks (seconds remaining; only used when the preset has a base time).
     bool clockActive = false;
