@@ -154,8 +154,10 @@ ps3-ray-chess/
   orientation), **en passant**, and a **promotion menu** (Q/R/B/N) (M2b); **per-colour pad
   assignment** (each pad to a side, single-pad fallback); **check / checkmate / stalemate →
   elimination** with dead grey pieces and **win conditions** (Teams: first team to mate an enemy;
-  FFA: last player standing) (M3). Coming: the FFA points system (M4); 4-player HUD + save/load (M5).
-  The classic game is untouched.
+  FFA: game ends with one player left) (M3); the **FFA points system** (M4) — capture values
+  (P1/N3/B5/R5/Q9; dead pieces score 0), +20 for a checkmate/stalemate, multi-check bonuses, winner
+  by most points, and a final standings screen. Coming: 4-player HUD polish + save/load (M5). The
+  classic game is untouched.
 
 ## Credits & license
 

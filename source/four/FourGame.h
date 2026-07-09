@@ -81,9 +81,10 @@ private:
     bool KingAttacked(const FourBoard& b, PColor c) const;
     void LegalMoves(int i, int j, std::vector<Move4>& out) const;           // filtered
     void ApplyMove(int fi, int fj, const Move4& m);
-    void AdvanceTurn();                         // next player + resolve mate/stalemate
+    void AdvanceTurn(int moverIdx);             // next player + resolve mate/stalemate
     bool HasAnyLegalMove(PColor c) const;
     void EliminatePlayer(int idx, bool checkmate);
+    void AwardCheckBonus(int moverIdx, PIECE_TYPE movedType);  // FFA multi-check bonus
 
     void CellOrigin(int i, int j, int& x, int& y) const;  // canvas top-left of cell (i,j)
 };

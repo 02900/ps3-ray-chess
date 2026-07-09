@@ -28,6 +28,19 @@ static char TypeChar(PIECE_TYPE t) {
     return 'p';
 }
 
+// FFA capture values (promoted-queen-worth-1 is omitted for simplicity).
+static int PieceValue(PIECE_TYPE t) {
+    switch (t) {
+        case PEON:   return 1;
+        case KNIGHT: return 3;
+        case BISHOP: return 5;
+        case ROOK:   return 5;
+        case QUEEN:  return 9;
+        case KING:   return 20;
+    }
+    return 0;
+}
+
 static const char* NameFor(PColor c) {
     switch (c) {
         case P_RED:    return "Rojo";
@@ -289,6 +302,16 @@ void FourGame::LegalMoves(int i, int j, std::vector<Move4>& out) const {
 }
 
 void FourGame::ApplyMove(int fi, int fj, const Move4& m) {
+    int moverIdx = current;
+
+    // Identify the captured piece BEFORE the board mutates (for FFA points).
+    Piece4 victim = { false, P_NONE, PEON, false, false };
+    if (m.kind == MK_ENPASSANT)      victim = board.At(epPawn.i, epPawn.j);
+    else if (board.At(m.i, m.j).present) victim = board.At(m.i, m.j);
+    if (mode == FOUR_FFA && victim.present && victim.alive) {
+        players[moverIdx].points += PieceValue(victim.type);   // dead/grey pieces score 0
+    }
+
     Piece4 mover = board.At(fi, fj);
     board.At(fi, fj) = { false, P_NONE, PEON, false, false };
 
@@ -326,10 +349,11 @@ void FourGame::ApplyMove(int fi, int fj, const Move4& m) {
         promoPending = true;
         promoSquare = { m.i, m.j };
         promoChoice = 0;
-        return;   // hold the turn until the player picks a piece
+        return;   // hold the turn (bonus + AdvanceTurn happen in ConfirmPromo)
     }
 
-    AdvanceTurn();
+    AwardCheckBonus(moverIdx, mover.type);
+    AdvanceTurn(moverIdx);
 }
 
 void FourGame::PromoMove(int delta) {
@@ -342,9 +366,26 @@ void FourGame::PromoMove(int delta) {
 void FourGame::ConfirmPromo() {
     if (!promoPending) return;
     static const PIECE_TYPE opts[4] = { QUEEN, ROOK, BISHOP, KNIGHT };
-    board.At(promoSquare.i, promoSquare.j).type = opts[promoChoice];
+    PIECE_TYPE chosen = opts[promoChoice];
+    board.At(promoSquare.i, promoSquare.j).type = chosen;
     promoPending = false;
-    AdvanceTurn();
+    AwardCheckBonus(current, chosen);
+    AdvanceTurn(current);
+}
+
+void FourGame::AwardCheckBonus(int moverIdx, PIECE_TYPE movedType) {
+    if (mode != FOUR_FFA) return;
+    int checked = 0;
+    for (int k = 0; k < 4; k++) {
+        if (players[k].eliminated) continue;
+        if (!IsEnemy(players[moverIdx].color, players[k].color)) continue;
+        if (KingAttacked(board, players[k].color)) checked++;
+    }
+    bool isQueen = (movedType == QUEEN);
+    int bonus = 0;
+    if (checked == 2)      bonus = isQueen ? 1 : 5;
+    else if (checked >= 3) bonus = isQueen ? 5 : 20;
+    players[moverIdx].points += bonus;
 }
 
 bool FourGame::HasAnyLegalMove(PColor c) const {
@@ -373,17 +414,21 @@ void FourGame::EliminatePlayer(int idx, bool checkmate) {
 // Advance to the next player, resolving anyone who has no legal move.
 //  - FFA: no-move => eliminated (checkmate or stalemate); game ends with 1 left.
 //  - Teams: checkmate => the other team wins; stalemate => draw.
-void FourGame::AdvanceTurn() {
+void FourGame::AdvanceTurn(int moverIdx) {
     hasSelected = false;
     selMoves.clear();
 
     for (int guard = 0; guard < 8; guard++) {
         if (mode == FOUR_FFA) {
-            int aliveCount = 0, last = -1;
-            for (int k = 0; k < 4; k++) if (!players[k].eliminated) { aliveCount++; last = k; }
+            int aliveCount = 0;
+            for (int k = 0; k < 4; k++) if (!players[k].eliminated) aliveCount++;
             if (aliveCount <= 1) {
+                // FFA winner is the most points (not necessarily the last standing).
+                int best = 0;
+                for (int k = 1; k < 4; k++) if (players[k].points > players[best].points) best = k;
                 gameOver = true;
-                resultMsg = std::string(NameFor(players[last].color)) + " gana!";
+                resultMsg = std::string(NameFor(players[best].color)) + " gana! (" +
+                            compat::to_string(players[best].points) + " pts)";
                 return;
             }
         }
@@ -405,7 +450,12 @@ void FourGame::AdvanceTurn() {
             return;
         }
 
-        EliminatePlayer(current, inCheck);   // FFA: out, keep going
+        // FFA scoring: +20 to the mater on checkmate, +20 to the player who got
+        // stalemated (rewarding the stalemated side, per the rules).
+        if (inCheck) players[moverIdx].points += 20;
+        else         players[current].points += 20;
+
+        EliminatePlayer(current, inCheck);   // out; keep resolving
     }
 }
 
@@ -563,12 +613,34 @@ void FourGame::Render(const std::map<std::string, Texture>& textures, bool activ
 
     // Game-over banner.
     if (gameOver) {
-        DrawRectangle(0, 0, BOARD_PX, BOARD_PX, Color{ 0, 0, 0, 150 });
-        int fs = 40;
+        DrawRectangle(0, 0, BOARD_PX, BOARD_PX, Color{ 0, 0, 0, 160 });
+        int fs = 38;
         int w = MeasureText(resultMsg.c_str(), fs);
-        DrawText(resultMsg.c_str(), BOARD_PX / 2 - w / 2, BOARD_PX / 2 - fs, fs, WHITE);
+        int y = BOARD_PX / 2 - 120;
+        DrawText(resultMsg.c_str(), BOARD_PX / 2 - w / 2, y, fs, WHITE);
+        y += 56;
+
+        if (mode == FOUR_FFA) {
+            // Final standings, sorted by points.
+            int order[4] = { 0, 1, 2, 3 };
+            for (int a = 0; a < 4; a++)
+                for (int b = a + 1; b < 4; b++)
+                    if (players[order[b]].points > players[order[a]].points) {
+                        int t = order[a]; order[a] = order[b]; order[b] = t;
+                    }
+            for (int r = 0; r < 4; r++) {
+                int k = order[r];
+                std::string line = compat::to_string(r + 1) + ". " + NameFor(players[k].color) +
+                                   "  " + compat::to_string(players[k].points) + " pts";
+                int lw = MeasureText(line.c_str(), 22);
+                DrawText(line.c_str(), BOARD_PX / 2 - lw / 2, y, 22, TintFor(players[k].color));
+                y += 30;
+            }
+            y += 10;
+        }
+
         const char* hint = "START: Reiniciar / Salir a menu";
-        int hw = MeasureText(hint, 20);
-        DrawText(hint, BOARD_PX / 2 - hw / 2, BOARD_PX / 2 + 16, 20, Color{ 210, 210, 210, 255 });
+        int hw = MeasureText(hint, 18);
+        DrawText(hint, BOARD_PX / 2 - hw / 2, y, 18, Color{ 210, 210, 210, 255 });
     }
 }
