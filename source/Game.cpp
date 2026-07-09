@@ -3,6 +3,7 @@
 #include "raylib.h"
 #include "Renderer.h"
 #include "audio.h"
+#include "settings.h"
 #include "compat.h"  // compat::to_string (PS3 newlib lacks std::to_string)
 #include "pieces/Queen.h"
 #include "pieces/Knight.h"
@@ -36,6 +37,10 @@ Game::Game() {
     audio_init();
 
     LoadTextures();
+
+    // Restore persisted Opciones before Reset(), so the initial clocks reflect the
+    // saved time control.
+    LoadSettings();
 
     // Set up the initial position, clocks and history.
     Reset();
@@ -258,6 +263,7 @@ void Game::HandlePauseMenu() {
                            padPressed(GAMEPAD_BUTTON_LEFT_FACE_RIGHT, false))) {
         autoFlip = !autoFlip;
         if (autoFlip) ApplyAutoFlip();
+        SaveSettings();
     }
 
     if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false)) {  // Cross
@@ -270,6 +276,7 @@ void Game::HandlePauseMenu() {
         } else if (menuIndex == 2) {          // Auto-invertir (also toggles on Cross)
             autoFlip = !autoFlip;
             if (autoFlip) ApplyAutoFlip();
+            SaveSettings();
         } else if (menuIndex == 3) {          // Reiniciar partida
             Reset();
             hasGame = true;
@@ -305,6 +312,7 @@ void Game::HandleOptionsMenu() {
             autoFlip = !autoFlip;
             if (autoFlip) ApplyAutoFlip();
         }
+        SaveSettings();                       // persist Opciones on every change
     }
 
     // Cross on "Volver", or Circle, returns to the main menu.
@@ -683,6 +691,25 @@ void Game::ApplyTimeControl() {
     clockActive = tc.baseSec > 0;
     whiteClock = tc.baseSec;
     blackClock = tc.baseSec;
+}
+
+void Game::LoadSettings() {
+    raychess_settings_t s;
+    if (settings_load(&s)) {
+        if (s.timeControlIndex >= 0 && s.timeControlIndex < TIME_CONTROL_COUNT) {
+            timeControlIndex = s.timeControlIndex;
+        }
+        player1IsWhite = (s.player1IsWhite != 0);
+        autoFlip = (s.autoFlip != 0);
+    }
+}
+
+void Game::SaveSettings() {
+    raychess_settings_t s;
+    s.timeControlIndex = timeControlIndex;
+    s.player1IsWhite = player1IsWhite ? 1 : 0;
+    s.autoFlip = autoFlip ? 1 : 0;
+    settings_save(&s);
 }
 
 void Game::UpdateClocks() {

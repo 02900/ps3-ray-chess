@@ -91,6 +91,8 @@ private:
 
     // Match setup / flow.
     void Reset();               // (re)start a game from the initial position
+    void LoadSettings();        // read persisted Opciones from disk (once, at startup)
+    void SaveSettings();        // persist Opciones to disk (on change)
     void ApplyTimeControl();    // load the selected preset into the clocks
     void UpdateClocks();        // tick the side to move; flag-fall ends the game
     void ToggleFlip();          // flip the board view (Triangle)

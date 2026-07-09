@@ -128,7 +128,10 @@ ps3-ray-chess/
   Salir) and an in-game **pause menu** (Start); the former settings moved to *Opciones*. Up to **4
   controllers**: assign each pad to a side (only that side's pads move it; a side with no pad is
   driven by any pad, so one controller still runs the whole game).
-- **Deferred**: persisting *Opciones* to the PS3 disk (settings currently reset each launch).
+- **Settings persistence** *(done)*: *Opciones* (time control, Jugador 1 colour, auto-flip) are saved
+  to `/dev_hdd0/RAYCHESS/settings.bin` and restored on launch. This PSL1GHT build ships no linkable
+  `sysFs*` wrappers, so `source/settings.c` calls the lv2 filesystem **syscalls** directly (open/read/
+  write/close/mkdir), the same way `sysinfo.c` reads RAM.
 
 ## Credits & license
 
