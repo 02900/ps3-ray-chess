@@ -329,7 +329,7 @@ void FourGame::ApplyMove(int fi, int fj, const Move4& m) {
         return;   // hold the turn until the player picks a piece
     }
 
-    NextTurn();
+    AdvanceTurn();
 }
 
 void FourGame::PromoMove(int delta) {
@@ -344,14 +344,73 @@ void FourGame::ConfirmPromo() {
     static const PIECE_TYPE opts[4] = { QUEEN, ROOK, BISHOP, KNIGHT };
     board.At(promoSquare.i, promoSquare.j).type = opts[promoChoice];
     promoPending = false;
-    NextTurn();
+    AdvanceTurn();
 }
 
-void FourGame::NextTurn() {
-    current = (current + 1) % 4;   // eliminated-player skipping is M3
+bool FourGame::HasAnyLegalMove(PColor c) const {
+    for (int i = 0; i < FourBoard::N; i++)
+        for (int j = 0; j < FourBoard::N; j++) {
+            const Piece4& p = board.At(i, j);
+            if (!p.present || !p.alive || p.color != c) continue;
+            std::vector<Move4> mv;
+            LegalMoves(i, j, mv);
+            if (!mv.empty()) return true;
+        }
+    return false;
+}
+
+void FourGame::EliminatePlayer(int idx, bool checkmate) {
+    (void) checkmate;   // M4 uses this for the +20 mate bonus
+    players[idx].eliminated = true;
+    PColor c = players[idx].color;
+    for (int i = 0; i < FourBoard::N; i++)
+        for (int j = 0; j < FourBoard::N; j++) {
+            Piece4& p = board.At(i, j);
+            if (p.present && p.color == c) p.alive = false;   // pieces go grey/dead
+        }
+}
+
+// Advance to the next player, resolving anyone who has no legal move.
+//  - FFA: no-move => eliminated (checkmate or stalemate); game ends with 1 left.
+//  - Teams: checkmate => the other team wins; stalemate => draw.
+void FourGame::AdvanceTurn() {
+    hasSelected = false;
+    selMoves.clear();
+
+    for (int guard = 0; guard < 8; guard++) {
+        if (mode == FOUR_FFA) {
+            int aliveCount = 0, last = -1;
+            for (int k = 0; k < 4; k++) if (!players[k].eliminated) { aliveCount++; last = k; }
+            if (aliveCount <= 1) {
+                gameOver = true;
+                resultMsg = std::string(NameFor(players[last].color)) + " gana!";
+                return;
+            }
+        }
+
+        do { current = (current + 1) % 4; } while (players[current].eliminated);
+
+        if (HasAnyLegalMove(CurrentColor())) return;   // normal turn
+
+        bool inCheck = KingAttacked(board, CurrentColor());
+
+        if (mode == FOUR_TEAMS) {
+            gameOver = true;
+            if (inCheck) {
+                int wt = 1 - players[current].team;
+                resultMsg = std::string("Equipo ") + (wt == 0 ? "A (Rojo+Amarillo)" : "B (Azul+Verde)") + " gana!";
+            } else {
+                resultMsg = "Empate (ahogado)";
+            }
+            return;
+        }
+
+        EliminatePlayer(current, inCheck);   // FFA: out, keep going
+    }
 }
 
 void FourGame::Select() {
+    if (gameOver) return;
     const Piece4& p = board.At(cursor.i, cursor.j);
     if (hasSelected) {
         for (const Move4& m : selMoves) {
@@ -426,8 +485,21 @@ void FourGame::Render(const std::map<std::string, Texture>& textures, bool activ
         }
     }
 
+    // Check indicator: ring the current player's king when it's attacked.
+    if (active && !gameOver && KingAttacked(board, CurrentColor())) {
+        for (int i = 0; i < FourBoard::N; i++)
+            for (int j = 0; j < FourBoard::N; j++) {
+                const Piece4& p = board.At(i, j);
+                if (p.present && p.alive && p.color == CurrentColor() && p.type == KING) {
+                    int x, y; CellOrigin(i, j, x, y);
+                    Rectangle r = { (float) x, (float) y, (float) CELL, (float) CELL };
+                    DrawRectangleLinesEx(r, 3, Color{ 235, 45, 45, 255 });
+                }
+            }
+    }
+
     // Cursor.
-    if (active) {
+    if (active && !gameOver) {
         int x, y; CellOrigin(cursor.i, cursor.j, x, y);
         Rectangle r = { (float) x, (float) y, (float) CELL, (float) CELL };
         DrawRectangleLinesEx(r, 3, Color{ 255, 205, 0, 255 });
@@ -460,7 +532,8 @@ void FourGame::Render(const std::map<std::string, Texture>& textures, bool activ
             std::string tm = std::string("Equipo ") + (players[pIdx].team == 0 ? "A" : "B");
             DrawText(tm.c_str(), s.x + 14, s.y + 90, 18, Color{170,170,180,255});
         }
-        if (isCurrent) DrawText("Turno", s.x + 14, s.y + 118, 18, Color{255,205,0,255});
+        if (players[pIdx].eliminated) DrawText("Eliminado", s.x + 14, s.y + 118, 18, Color{170,90,90,255});
+        else if (isCurrent)           DrawText("Turno",     s.x + 14, s.y + 118, 18, Color{255,205,0,255});
     }
 
     // Promotion picker (on top of everything).
@@ -486,5 +559,16 @@ void FourGame::Render(const std::map<std::string, Texture>& textures, bool activ
                 DrawTexturePro(it->second, src, dst, (Vector2){ 0, 0 }, 0.0f, TintFor(CurrentColor()));
             }
         }
+    }
+
+    // Game-over banner.
+    if (gameOver) {
+        DrawRectangle(0, 0, BOARD_PX, BOARD_PX, Color{ 0, 0, 0, 150 });
+        int fs = 40;
+        int w = MeasureText(resultMsg.c_str(), fs);
+        DrawText(resultMsg.c_str(), BOARD_PX / 2 - w / 2, BOARD_PX / 2 - fs, fs, WHITE);
+        const char* hint = "START: Reiniciar / Salir a menu";
+        int hw = MeasureText(hint, 20);
+        DrawText(hint, BOARD_PX / 2 - hw / 2, BOARD_PX / 2 + 16, 20, Color{ 210, 210, 210, 255 });
     }
 }

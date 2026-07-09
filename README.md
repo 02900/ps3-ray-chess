@@ -151,9 +151,11 @@ ps3-ray-chess/
   / *Equipos*). Done: board + setup + render (M1); **legal move generation** for all pieces on the
   masked board, 4 pawn directions + double-step, can't-capture-own/teammate, own-king-safe filter,
   **turn order** Red→Blue→Yellow→Green, select/move with highlights (M2a); **castling** (per-side
-  orientation), **en passant**, and a **promotion menu** (Q/R/B/N) (M2b). Coming: per-colour pad
-  assignment; check/mate/elimination + dead pieces + win conditions (M3); the FFA points system (M4);
-  HUD + save/load (M5). The classic game is untouched.
+  orientation), **en passant**, and a **promotion menu** (Q/R/B/N) (M2b); **per-colour pad
+  assignment** (each pad to a side, single-pad fallback); **check / checkmate / stalemate →
+  elimination** with dead grey pieces and **win conditions** (Teams: first team to mate an enemy;
+  FFA: last player standing) (M3). Coming: the FFA points system (M4); 4-player HUD + save/load (M5).
+  The classic game is untouched.
 
 ## Credits & license
 

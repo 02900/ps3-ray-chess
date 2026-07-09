@@ -39,6 +39,7 @@ public:
 
     FourMode Mode() const { return mode; }
     PColor TurnColor() const { return players[current].color; }   // whose turn it is
+    bool IsGameOver() const { return gameOver; }
 
 private:
     FourBoard board;
@@ -64,6 +65,10 @@ private:
     Position promoSquare = {0, 0};
     int promoChoice = 0;        // 0..3 = Queen / Rook / Bishop / Knight
 
+    // End-of-game.
+    bool gameOver = false;
+    std::string resultMsg;
+
     // Move engine.
     PColor CurrentColor() const { return players[current].color; }
     int TeamOf(PColor c) const;                 // FFA: unique per colour; Teams: 0/1
@@ -76,7 +81,9 @@ private:
     bool KingAttacked(const FourBoard& b, PColor c) const;
     void LegalMoves(int i, int j, std::vector<Move4>& out) const;           // filtered
     void ApplyMove(int fi, int fj, const Move4& m);
-    void NextTurn();
+    void AdvanceTurn();                         // next player + resolve mate/stalemate
+    bool HasAnyLegalMove(PColor c) const;
+    void EliminatePlayer(int idx, bool checkmate);
 
     void CellOrigin(int i, int j, int& x, int& y) const;  // canvas top-left of cell (i,j)
 };
