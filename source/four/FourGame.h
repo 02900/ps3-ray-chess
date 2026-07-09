@@ -41,6 +41,10 @@ public:
     PColor TurnColor() const { return players[current].color; }   // whose turn it is
     bool IsGameOver() const { return gameOver; }
 
+    // Full-state save/load (own blob format; routed by Game's savedata flow).
+    std::vector<unsigned char> Serialize() const;
+    bool Deserialize(const unsigned char* data, unsigned size);
+
 private:
     FourBoard board;
     FourMode mode;

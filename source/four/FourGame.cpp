@@ -1,5 +1,6 @@
 #include "FourGame.h"
 #include "../compat.h"   // compat::to_string (PS3 newlib lacks std::to_string)
+#include <cstring>       // memcpy for save/load
 
 // ---- palette --------------------------------------------------------------
 
@@ -584,6 +585,11 @@ void FourGame::Render(const std::map<std::string, Texture>& textures, bool activ
         }
         if (players[pIdx].eliminated) DrawText("Eliminado", s.x + 14, s.y + 118, 18, Color{170,90,90,255});
         else if (isCurrent)           DrawText("Turno",     s.x + 14, s.y + 118, 18, Color{255,205,0,255});
+
+        // Check flag for any player still in the game whose king is attacked.
+        if (!players[pIdx].eliminated && !gameOver && KingAttacked(board, s.c)) {
+            DrawText("\xC2\xA1Jaque!", s.x + 150, s.y + 118, 18, Color{235,60,60,255});
+        }
     }
 
     // Promotion picker (on top of everything).
@@ -643,4 +649,90 @@ void FourGame::Render(const std::map<std::string, Texture>& textures, bool activ
         int hw = MeasureText(hint, 18);
         DrawText(hint, BOARD_PX / 2 - hw / 2, y, 18, Color{ 210, 210, 210, 255 });
     }
+}
+
+// ---- save / load ----------------------------------------------------------
+
+#define FOUR_SAVE_MAGIC   0x52433447u   /* "RC4G" — distinct from the classic RCG1 */
+#define FOUR_SAVE_VERSION 1
+
+namespace {
+struct FW {
+    std::vector<unsigned char> v;
+    void put(const void* p, unsigned n) { const unsigned char* b = (const unsigned char*) p; v.insert(v.end(), b, b + n); }
+    void u32(unsigned x)  { put(&x, 4); }
+    void i32(int x)       { put(&x, 4); }
+    void u8(unsigned char x) { v.push_back(x); }
+    void str(const std::string& s) { u32((unsigned) s.size()); put(s.data(), (unsigned) s.size()); }
+};
+struct FR {
+    const unsigned char* p; const unsigned char* e; bool ok;
+    FR(const unsigned char* d, unsigned n) : p(d), e(d + n), ok(true) {}
+    void get(void* d, unsigned n) { if (p + n > e) { ok = false; return; } memcpy(d, p, n); p += n; }
+    unsigned u32() { unsigned x = 0; get(&x, 4); return x; }
+    int i32()      { int x = 0; get(&x, 4); return x; }
+    unsigned char u8() { unsigned char x = 0; get(&x, 1); return x; }
+    std::string str() { unsigned n = u32(); if (!ok || p + n > e) { ok = false; return std::string(); }
+                        std::string s((const char*) p, n); p += n; return s; }
+};
+}
+
+std::vector<unsigned char> FourGame::Serialize() const {
+    FW w;
+    w.u32(FOUR_SAVE_MAGIC); w.u32(FOUR_SAVE_VERSION);
+    w.i32((int) mode); w.i32(current);
+    w.u8(gameOver ? 1 : 0); w.str(resultMsg);
+    w.i32(cursor.i); w.i32(cursor.j);
+    w.u8(promoPending ? 1 : 0); w.i32(promoSquare.i); w.i32(promoSquare.j); w.i32(promoChoice);
+    w.u8(epValid ? 1 : 0); w.i32(epMid.i); w.i32(epMid.j); w.i32(epPawn.i); w.i32(epPawn.j);
+    for (int k = 0; k < 4; k++) {
+        w.i32((int) players[k].color); w.i32(players[k].team);
+        w.u8(players[k].eliminated ? 1 : 0); w.i32(players[k].points);
+    }
+    for (int i = 0; i < FourBoard::N; i++)
+        for (int j = 0; j < FourBoard::N; j++) {
+            const Piece4& p = board.At(i, j);
+            w.u8(p.present ? 1 : 0);
+            if (p.present) { w.i32((int) p.color); w.i32((int) p.type); w.u8(p.hasMoved ? 1 : 0); w.u8(p.alive ? 1 : 0); }
+        }
+    return w.v;
+}
+
+bool FourGame::Deserialize(const unsigned char* data, unsigned size) {
+    FR r(data, size);
+    if (r.u32() != FOUR_SAVE_MAGIC) return false;
+    if (r.u32() != FOUR_SAVE_VERSION) return false;
+
+    FourMode m = (FourMode) r.i32();
+    int cur = r.i32();
+    bool go = r.u8() != 0; std::string msg = r.str();
+    Position cu; cu.i = r.i32(); cu.j = r.i32();
+    bool pp = r.u8() != 0; Position ps; ps.i = r.i32(); ps.j = r.i32(); int pc = r.i32();
+    bool ev = r.u8() != 0; Position em, ep2; em.i = r.i32(); em.j = r.i32(); ep2.i = r.i32(); ep2.j = r.i32();
+
+    P4 pl[4];
+    for (int k = 0; k < 4; k++) {
+        pl[k].color = (PColor) r.i32(); pl[k].team = r.i32();
+        pl[k].eliminated = r.u8() != 0; pl[k].points = r.i32();
+    }
+
+    FourBoard b;   // overwrite every cell from the blob
+    for (int i = 0; i < FourBoard::N; i++)
+        for (int j = 0; j < FourBoard::N; j++) {
+            Piece4 c = { false, P_NONE, PEON, false, false };
+            if (r.u8() != 0) { c.present = true; c.color = (PColor) r.i32(); c.type = (PIECE_TYPE) r.i32();
+                               c.hasMoved = r.u8() != 0; c.alive = r.u8() != 0; }
+            b.At(i, j) = c;
+        }
+
+    if (!r.ok) return false;
+
+    mode = m; current = (cur >= 0 && cur < 4) ? cur : 0;
+    gameOver = go; resultMsg = msg; cursor = cu;
+    promoPending = pp; promoSquare = ps; promoChoice = pc;
+    epValid = ev; epMid = em; epPawn = ep2;
+    for (int k = 0; k < 4; k++) players[k] = pl[k];
+    board = b;
+    hasSelected = false; selMoves.clear();
+    return true;
 }

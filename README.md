@@ -145,19 +145,17 @@ ps3-ray-chess/
   **captured pieces** with a material-advantage readout (right); the **last move's** from/to squares
   are highlighted. All three follow L1/R1 history and ride along with saves (per-snapshot SAN +
   captured piece, save format v2). (SAN omits disambiguation for the rare two-pieces-same-square case.)
-- **4-player chess** *(in progress)*: a new mode (chess.com 4PC) built as a **self-contained
+- **4-player chess** *(done)*: a full second mode (chess.com 4PC) in a **self-contained
   `source/four/` engine** (14×14 board, four 3×3 corners removed, four armies tinted red/blue/yellow/
   green from the white silhouettes), routed via a **mode-select menu** (*Clásico* / *4 jugadores FFA*
-  / *Equipos*). Done: board + setup + render (M1); **legal move generation** for all pieces on the
-  masked board, 4 pawn directions + double-step, can't-capture-own/teammate, own-king-safe filter,
-  **turn order** Red→Blue→Yellow→Green, select/move with highlights (M2a); **castling** (per-side
-  orientation), **en passant**, and a **promotion menu** (Q/R/B/N) (M2b); **per-colour pad
-  assignment** (each pad to a side, single-pad fallback); **check / checkmate / stalemate →
-  elimination** with dead grey pieces and **win conditions** (Teams: first team to mate an enemy;
-  FFA: game ends with one player left) (M3); the **FFA points system** (M4) — capture values
-  (P1/N3/B5/R5/Q9; dead pieces score 0), +20 for a checkmate/stalemate, multi-check bonuses, winner
-  by most points, and a final standings screen. Coming: 4-player HUD polish + save/load (M5). The
-  classic game is untouched.
+  / *Equipos*). Legal move generation for all pieces on the masked board (4 pawn directions,
+  double-step, **castling** per-side, **en passant**, a **promotion menu**), own-king-safe filtering,
+  **turn order** Red→Blue→Yellow→Green, and **per-colour controller assignment** (single-pad
+  fallback). **Check / checkmate / stalemate → elimination** (dead grey pieces) with win conditions
+  (Teams: first team to mate; FFA: last player standing), the full **FFA points system** (capture
+  values, +20 mate/stalemate, multi-check bonuses, winner by points, final standings), a 4-player HUD
+  (points / turn / check / eliminated), and **save/load** via the same XMB Saved Data Utility (its own
+  blob format, auto-detected on load). The classic game is untouched.
 
 ## Credits & license
 

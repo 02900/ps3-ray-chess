@@ -492,10 +492,10 @@ void Game::HandlePauseMenu() {
     if (padPressed(GAMEPAD_BUTTON_RIGHT_FACE_DOWN, false)) {  // Cross
         if (menuIndex == 0) {                 // Reanudar juego en curso
             screen = SCREEN::SCR_GAME;
-        } else if (menuIndex == 1) {          // Guardar partida (classic only for now)
-            if (classic) StartSaveGame();
-        } else if (menuIndex == 2) {          // Cargar partida (classic only for now)
-            if (classic) StartLoadGame();
+        } else if (menuIndex == 1) {          // Guardar partida (classic or 4-player)
+            StartSaveGame();
+        } else if (menuIndex == 2) {          // Cargar partida (auto-detects the save type)
+            StartLoadGame();
         } else if (menuIndex == 3) {          // Cambiar equipo (controller assignment)
             assignReturnsToGame = true;
             screen = classic ? SCREEN::SCR_ASSIGN : SCREEN::SCR_FOUR_ASSIGN;
@@ -753,14 +753,27 @@ bool Game::DeserializeGame(const unsigned char* data, unsigned size) {
 }
 
 void Game::StartSaveGame() {
-    std::vector<unsigned char> blob = SerializeGame();
+    std::vector<unsigned char> blob;
+    std::string title, subtitle, detail;
 
-    std::string subtitle = "Ronda " + compat::to_string(round);
-    std::string detail = std::string("Turno: ") + (turn == PIECE_COLOR::C_WHITE ? "Blancas" : "Negras")
-                       + "\nRitmo: " + TIME_CONTROLS[timeControlIndex].label;
+    if (gameMode == MODE_CLASSIC) {
+        blob = SerializeGame();
+        title = "RayChess";
+        subtitle = "Ronda " + compat::to_string(round);
+        detail = std::string("Turno: ") + (turn == PIECE_COLOR::C_WHITE ? "Blancas" : "Negras")
+               + "\nRitmo: " + TIME_CONTROLS[timeControlIndex].label;
+    } else if (four) {
+        static const char* CN[4] = { "Rojo", "Azul", "Amarillo", "Verde" };
+        blob = four->Serialize();
+        title = "RayChess 4P";
+        subtitle = (gameMode == MODE_4P_FFA) ? "4 jugadores (FFA)" : "4 jugadores (Equipos)";
+        detail = std::string("Turno: ") + CN[(int) four->TurnColor()];
+    } else {
+        return;
+    }
 
     savegame_start_save(blob.data(), (unsigned) blob.size(),
-                        "RayChess", subtitle.c_str(), detail.c_str(),
+                        title.c_str(), subtitle.c_str(), detail.c_str(),
                         saveicon_png, saveicon_png_size);
 
     saveBusyIsLoad = false;
@@ -782,7 +795,26 @@ void Game::HandleSaveBusy() {
     if (st == SAVEGAME_OK && saveBusyIsLoad) {
         unsigned sz = 0;
         const void* d = savegame_result_data(&sz);
-        bool ok = d && DeserializeGame((const unsigned char*) d, sz);
+        bool ok = false;
+
+        if (d && sz >= 4) {
+            unsigned magic = 0;
+            memcpy(&magic, d, 4);
+            if (magic == 0x52434731u) {          // "RCG1" — classic save
+                ok = DeserializeGame((const unsigned char*) d, sz);
+                if (ok) { gameMode = MODE_CLASSIC; four.reset(); }
+            } else {                             // otherwise try a 4-player save
+                FourGame* fg = new FourGame(FOUR_FFA);
+                if (fg->Deserialize((const unsigned char*) d, sz)) {
+                    four.reset(fg);
+                    gameMode = (four->Mode() == FOUR_FFA) ? MODE_4P_FFA : MODE_4P_TEAMS;
+                    ok = true;
+                } else {
+                    delete fg;
+                }
+            }
+        }
+
         savegame_clear();
         if (ok) { hasGame = true; screen = SCREEN::SCR_GAME; }
         else    { screen = saveReturnScreen; }
