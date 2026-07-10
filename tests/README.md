@@ -74,6 +74,8 @@ is skipped with a clear message.
 | `press <btn>` | `ok` (`cross circle triangle square up down left right start select l1 r1`) |
 | `setup <fen> [w\|b]` | `ok` — classic: load a FEN placement (+ active colour) to test a position |
 | `setup4 <turn> <c><t>@i,j …` | `ok` — 4PC: place pieces (`c`∈r/b/y/g, `t`∈p/r/n/b/q/k) for scenarios |
+| `setclock <w> <b>` | `ok` — classic: force the Fischer clock active with these seconds (flag-fall tests) |
+| `result` | classic terminal state, or the 4PC game-over message (`Equipo A … gana!` / `Empate …`) |
 
 ## Notes
 

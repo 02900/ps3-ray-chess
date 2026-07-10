@@ -42,3 +42,13 @@ def test_setup_backrank_mate(classic):
     assert st["gameover"] == "1"
     assert st["check"] == "1"
     assert classic.legal("g8") == set()
+
+
+def test_setup_ladder_mate(classic):
+    # Two-rook "ladder" mate: Rh8 checks along rank 8, Ra7 seals rank 7 -> the e8 king
+    # has nowhere to go. Black to move -> White wins.
+    assert classic.setup("4k2R/R7/8/8/8/8/8/K7", "b") == "ok"
+    st = classic.state()
+    assert st["state"] == "white_wins", st
+    assert st["gameover"] == "1"
+    assert classic.legal("e8") == set()

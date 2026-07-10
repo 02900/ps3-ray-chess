@@ -1738,10 +1738,29 @@ std::string Game::HandleTestCommand(const std::string& cmd) {
         return "ok";
     }
 
+    if (op == "result") {
+        if (is4) { std::string r = four->TestResult(); return r.empty() ? std::string("(running)") : r; }
+        if (state == S_WHITE_WINS) return "white_wins";
+        if (state == S_BLACK_WINS) return "black_wins";
+        if (state == S_STALEMATE)  return "stalemate";
+        return "(running)";
+    }
+
+    if (op == "setclock") {
+        // Classic only: force the Fischer clock active and set both sides' seconds.
+        // Lets time/flag-fall be tested (e.g. `setclock 0.001 60`).
+        if (is4) return "err setclock_classic_only";
+        if (t.size() < 3) return "err setclock_needs_white_black";
+        clockActive = true;
+        whiteClock = std::atof(t[1].c_str());
+        blackClock = std::atof(t[2].c_str());
+        return "ok";
+    }
+
     if (op == "help")
-        return "queries: ping state board turn at<sq> legal<sq> history points | "
+        return "queries: ping state board turn at<sq> legal<sq> history points result | "
                "driving: press<btn> newgame<classic|ffa|teams> move<from><to> promote<q|r|b|n> | "
-               "setup <fen> [w|b] | setup4 <turn> <c><t>@i,j ...";
+               "setup <fen> [w|b] | setup4 <turn> <c><t>@i,j ... | setclock <w> <b>";
 
     return "err unknown " + op;
 }

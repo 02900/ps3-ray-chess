@@ -61,3 +61,31 @@ def test_stalemate_eliminates_and_scores_stalemated(ffa):
     assert "(elim)" in ffa.send("points")
     # The game is not over: red / yellow / green are still in.
     assert ffa.state()["gameover"] == "0"
+
+
+def test_multicheck_double_knight_bonus(ffa):
+    # A red knight to (5,7) checks the blue king (3,8) AND the yellow king (6,9) at
+    # once. A non-queen double check is worth +5. (Neither king is mated -> game on.)
+    ffa.setup4("red",
+               "rn@7,8", "rk@13,3",
+               "bk@3,8", "yk@6,9", "gk@10,3")
+    ffa.assert_ok(ffa.move("7,8", "5,7"))
+    assert ffa.points()["red"] == 5, ffa.send("points")
+
+
+def test_multicheck_double_queen_is_worth_less(ffa):
+    # The SAME double check delivered by a queen (rank 5 + file 7) is worth only +1.
+    ffa.setup4("red",
+               "rq@7,9", "rk@13,3",
+               "bk@5,10", "yk@0,7", "gk@10,3")
+    ffa.assert_ok(ffa.move("7,9", "5,7"))
+    assert ffa.points()["red"] == 1, ffa.send("points")
+
+
+def test_multicheck_triple_knight_bonus(ffa):
+    # A red knight to (5,7) checks blue (3,8), yellow (6,9) AND green (4,5) -> +20.
+    ffa.setup4("red",
+               "rn@7,8", "rk@13,3",
+               "bk@3,8", "yk@6,9", "gk@4,5")
+    ffa.assert_ok(ffa.move("7,8", "5,7"))
+    assert ffa.points()["red"] == 20, ffa.send("points")
