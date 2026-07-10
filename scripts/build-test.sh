@@ -14,4 +14,11 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export NETTEST=1
+
+# The Makefile's incremental build does NOT track the NETTEST flag, so switching
+# between a normal build and a test build would otherwise leave Game.o compiled
+# WITHOUT -DNETTEST (nettest::Start() never called → no server). Force a clean
+# rebuild so every object is compiled with the flag.
+echo ">> cleaning first (NETTEST toggles the whole build)"
+"$REPO_ROOT/scripts/build.sh" clean
 exec "$REPO_ROOT/scripts/build.sh" "$@"

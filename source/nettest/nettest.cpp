@@ -15,6 +15,8 @@
 #include <arpa/inet.h>
 #include <sysmodule/sysmodule.h>
 
+#include <unistd.h>  // usleep (retry backoff)
+
 #include <cstdio>
 #include <cstring>
 #include <set>
@@ -84,25 +86,39 @@ void handle_client(int sock) {
 }
 
 void server_thread(void*) {
+    std::printf("[nettest] server thread up\n");
+
     struct sockaddr_in addr;
     std::memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(CMD_PORT);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    g_listen = netSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (g_listen < 0) { std::printf("[nettest] socket failed\n"); sysThreadExit(0); return; }
-
-    int one = 1;
-    netSetSockOpt(g_listen, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-
-    if (netBind(g_listen, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        std::printf("[nettest] bind failed\n"); netClose(g_listen); sysThreadExit(0); return;
+    // The net stack can need a moment to be ready after netInitialize (ps3-remote-play
+    // happens to create its sockets seconds after boot, we do it immediately). Retry
+    // the whole setup until it binds+listens instead of giving up on the first miss.
+    g_listen = -1;
+    for (int attempt = 1; g_running; attempt++) {
+        int s = netSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (s < 0) {
+            std::printf("[nettest] socket failed (errno=%d, try %d)\n", net_errno, attempt);
+            usleep(1000 * 1000); continue;
+        }
+        int one = 1;
+        netSetSockOpt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+        if (netBind(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            std::printf("[nettest] bind failed (errno=%d, try %d)\n", net_errno, attempt);
+            netClose(s); usleep(1000 * 1000); continue;
+        }
+        if (netListen(s, 1) < 0) {
+            std::printf("[nettest] listen failed (errno=%d, try %d)\n", net_errno, attempt);
+            netClose(s); usleep(1000 * 1000); continue;
+        }
+        g_listen = s;
+        std::printf("[nettest] listening on port %d (try %d)\n", CMD_PORT, attempt);
+        break;
     }
-    if (netListen(g_listen, 1) < 0) {
-        std::printf("[nettest] listen failed\n"); netClose(g_listen); sysThreadExit(0); return;
-    }
-    std::printf("[nettest] listening on port %d\n", CMD_PORT);
+    if (g_listen < 0) { sysThreadExit(0); return; }
 
     while (g_running) {
         struct pollfd pfd;
