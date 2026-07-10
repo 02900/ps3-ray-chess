@@ -10,6 +10,7 @@
 
 #include <cstring>   // memcpy for game-state (de)serialization
 #include <cctype>    // toupper for algebraic notation
+#include <cstdlib>   // atoi for the test-command coordinate parser
 #include "pieces/Queen.h"
 #include "pieces/Knight.h"
 #include "pieces/Bishop.h"
@@ -1426,6 +1427,54 @@ const char* FourColorName(PColor c) {
     }
 }
 
+const char* ClassicTypeName(PIECE_TYPE t) {
+    switch (t) {
+        case PEON:   return "peon";
+        case ROOK:   return "rook";
+        case KNIGHT: return "knight";
+        case BISHOP: return "bishop";
+        case QUEEN:  return "queen";
+        case KING:   return "king";
+    }
+    return "peon";
+}
+
+// Parse an algebraic square "e2" -> {i = 8-rank, j = file-'a'} (matches MoveToSan).
+bool ParseAlg(const std::string& s, Position& out) {
+    if (s.size() != 2) return false;
+    char f = s[0], r = s[1];
+    if (f < 'a' || f > 'h' || r < '1' || r > '8') return false;
+    out.j = f - 'a';
+    out.i = 8 - (r - '0');
+    return true;
+}
+
+// Parse a numeric "i,j" pair.
+bool ParseNum(const std::string& s, Position& out) {
+    size_t c = s.find(',');
+    if (c == std::string::npos) return false;
+    out.i = std::atoi(s.substr(0, c).c_str());
+    out.j = std::atoi(s.substr(c + 1).c_str());
+    return true;
+}
+
+// Algebraic name of a classic square.
+std::string AlgOf(const Position& p) {
+    std::string s;
+    s += (char) ('a' + p.j);
+    s += (char) ('0' + (8 - p.i));
+    return s;
+}
+
+// Promotion letter (q/r/b/n) -> choice index, or -1.
+int PromoChoiceOf(const std::string& q) {
+    if (q == "q" || q == "queen")  return 0;
+    if (q == "r" || q == "rook")   return 1;
+    if (q == "b" || q == "bishop") return 2;
+    if (q == "n" || q == "knight") return 3;
+    return -1;
+}
+
 }  // namespace
 
 // One-line summary of the live state, e.g.
@@ -1443,9 +1492,8 @@ std::string Game::TestStateString() {
         bool over = (state == S_WHITE_WINS || state == S_BLACK_WINS || state == S_STALEMATE);
         s += std::string(" gameover=") + (over ? "1" : "0");
     } else {
-        s += std::string(" mode=") + (gameMode == MODE_4P_FFA ? "ffa" : "teams");
-        s += std::string(" turn=") + FourColorName(four->TurnColor());
-        s += std::string(" gameover=") + (four->IsGameOver() ? "1" : "0");
+        s += " ";
+        s += four->TestState();  // mode/turn/current/check/promo/gameover
     }
     return s;
 }
@@ -1471,18 +1519,68 @@ std::string Game::TestBoardString() const {
 }
 
 // Parse and execute one command; return the single-line reply (no trailing '\n').
-// N1 vocabulary: ping / state / board / press <button> / help.
 std::string Game::HandleTestCommand(const std::string& cmd) {
     std::vector<std::string> t = TestTokens(cmd);
     if (t.empty()) return "err empty";
     const std::string& op = t[0];
+    const bool is4 = (gameMode != MODE_CLASSIC) && four;
 
+    // --- queries ------------------------------------------------------------
     if (op == "ping")  return "pong";
     if (op == "state") return TestStateString();
-    if (op == "board") {
-        if (gameMode == MODE_CLASSIC || !four) return TestBoardString();
-        return "err board_4p_not_implemented";  // 4PC dump lands in N2
+    if (op == "board") return is4 ? four->TestBoard() : TestBoardString();
+    if (op == "turn")
+        return is4 ? std::string(FourColorName(four->TurnColor()))
+                   : std::string(turn == C_WHITE ? "white" : "black");
+
+    if (op == "at") {
+        if (t.size() < 2) return "err at_needs_square";
+        Position p;
+        if (is4) {
+            if (!ParseNum(t[1], p)) return "err needs_numeric i,j";
+            return four->TestAt(p.i, p.j);
+        }
+        if (!ParseAlg(t[1], p) && !ParseNum(t[1], p)) return "err bad_square " + t[1];
+        Piece* pc = board.At(p);
+        if (!pc) return "empty";
+        return std::string(pc->color == C_WHITE ? "white " : "black ") + ClassicTypeName(pc->type);
     }
+
+    if (op == "legal") {
+        if (t.size() < 2) return "err legal_needs_square";
+        Position p;
+        if (is4) {
+            if (!ParseNum(t[1], p)) return "err needs_numeric i,j";
+            return four->TestLegal(p.i, p.j);
+        }
+        if (!ParseAlg(t[1], p) && !ParseNum(t[1], p)) return "err bad_square " + t[1];
+        Piece* pc = board.At(p);
+        if (!pc) return "none";
+        auto it = possibleMovesPerPiece.find(pc);
+        if (it == possibleMovesPerPiece.end() || it->second.empty()) return "none";
+        std::string s;
+        for (size_t k = 0; k < it->second.size(); k++) {
+            if (k) s += ' ';
+            s += AlgOf(it->second[k].position);
+        }
+        return s;
+    }
+
+    if (op == "history") {
+        if (is4) return "err no_history_4p";
+        std::string s;
+        for (int k = 1; k <= historyIndex; k++) {
+            if (history[k].hasMove) { if (!s.empty()) s += ' '; s += history[k].san; }
+        }
+        return s.empty() ? std::string("(none)") : s;
+    }
+
+    if (op == "points") {
+        if (!is4) return "err points_only_4p";
+        return four->TestPoints();
+    }
+
+    // --- input / driving ----------------------------------------------------
     if (op == "press") {
         if (t.size() < 2) return "err press_needs_button";
         int b = TestButtonId(t[1]);
@@ -1490,9 +1588,69 @@ std::string Game::HandleTestCommand(const std::string& cmd) {
         nettest::SynthPress(b);
         return "ok";
     }
+
+    if (op == "newgame") {
+        if (t.size() < 2) return "err newgame_needs_mode";
+        if (t[1] == "classic") {
+            gameMode = MODE_CLASSIC; four.reset(); Reset();
+            screen = SCR_GAME; hasGame = true; return "ok";
+        }
+        if (t[1] == "ffa") {
+            gameMode = MODE_4P_FFA; four.reset(new FourGame(FOUR_FFA));
+            screen = SCR_GAME; hasGame = true; return "ok";
+        }
+        if (t[1] == "teams") {
+            gameMode = MODE_4P_TEAMS; four.reset(new FourGame(FOUR_TEAMS));
+            screen = SCR_GAME; hasGame = true; return "ok";
+        }
+        return "err bad_mode " + t[1];
+    }
+
+    if (op == "move") {
+        // Accept "move e2 e4", "move e2e4", or numeric "move fi,fj ti,tj".
+        std::string a, b;
+        if (t.size() >= 3) { a = t[1]; b = t[2]; }
+        else if (t.size() == 2 && t[1].size() == 4) { a = t[1].substr(0, 2); b = t[1].substr(2, 2); }
+        else return "err move_needs_from_to";
+
+        if (is4) {
+            Position f, to;
+            if (!ParseNum(a, f) || !ParseNum(b, to)) return "err move_4p_needs_numeric i,j";
+            return four->TestMove(f.i, f.j, to.i, to.j) ? std::string("ok") : std::string("err illegal");
+        }
+        if (screen != SCR_GAME) return "err not_in_game";
+        if (state == S_PROMOTION) return "err awaiting_promotion";
+        if (state != S_RUNNING)   return "err game_over";
+
+        Position f, to;
+        if (!ParseAlg(a, f)  && !ParseNum(a, f))  return "err bad_square " + a;
+        if (!ParseAlg(b, to) && !ParseNum(b, to)) return "err bad_square " + b;
+        Piece* pc = board.At(f);
+        if (!pc) return "err no_piece " + a;
+        if (pc->color != turn) return "err not_your_turn";
+        selectedPiece = pc;
+        Move* mv = GetMoveAtPosition(to);
+        if (!mv) { selectedPiece = nullptr; return "err illegal"; }
+        DoMoveOnBoard(*mv);
+        if (state != S_PROMOTION) selectedPiece = nullptr;  // keep selected during promotion
+        return "ok";
+    }
+
+    if (op == "promote") {
+        int ch = (t.size() >= 2) ? PromoChoiceOf(t[1]) : -1;
+        if (ch < 0) return "err promote_needs_qrbn";
+        if (is4) return four->TestPromote(ch) ? std::string("ok") : std::string("err no_promotion");
+        if (state != S_PROMOTION) return "err no_promotion";
+        promotionChoice = ch;
+        // Confirm via a synthetic Cross so the real HandleInputPromotion path applies it
+        // this frame (create piece + swap turns), keeping SAN/history identical to play.
+        nettest::SynthPress(GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+        return "ok";
+    }
+
     if (op == "help")
-        return "cmds: ping state board press<btn> "
-               "(btns: cross circle triangle square up down left right start select l1 r1)";
+        return "queries: ping state board turn at<sq> legal<sq> history points | "
+               "driving: press<btn> newgame<classic|ffa|teams> move<from><to> promote<q|r|b|n>";
 
     return "err unknown " + op;
 }

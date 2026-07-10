@@ -736,3 +736,115 @@ bool FourGame::Deserialize(const unsigned char* data, unsigned size) {
     hasSelected = false; selMoves.clear();
     return true;
 }
+
+// ---- e2e test harness hooks -----------------------------------------------
+#ifdef NETTEST
+
+static char ColorChar(PColor c) {
+    switch (c) { case P_RED: return 'r'; case P_BLUE: return 'b';
+                 case P_YELLOW: return 'y'; case P_GREEN: return 'g'; default: return '?'; }
+}
+static const char* ColorName(PColor c) {
+    switch (c) { case P_RED: return "red"; case P_BLUE: return "blue";
+                 case P_YELLOW: return "yellow"; case P_GREEN: return "green"; default: return "none"; }
+}
+static const char* TypeName(PIECE_TYPE t) {
+    switch (t) { case PEON: return "peon"; case ROOK: return "rook"; case KNIGHT: return "knight";
+                 case BISHOP: return "bishop"; case QUEEN: return "queen"; case KING: return "king"; }
+    return "peon";
+}
+
+std::string FourGame::TestState() const {
+    std::string s = "mode=";
+    s += (mode == FOUR_FFA ? "ffa" : "teams");
+    s += " turn=";     s += ColorName(CurrentColor());
+    s += " current=";  s += compat::to_string(current);
+    s += " check=";    s += (KingAttacked(board, CurrentColor()) ? "1" : "0");
+    s += " promo=";    s += (promoPending ? "1" : "0");
+    s += " gameover="; s += (gameOver ? "1" : "0");
+    return s;
+}
+
+// 14 rows of 14 two-char cells joined by '/': "<colorChar><typeChar>" for a piece
+// (colorChar upper-cased if the piece is dead), ".." for an empty playable square,
+// "xx" for a removed corner.
+std::string FourGame::TestBoard() const {
+    std::string out;
+    for (int i = 0; i < FourBoard::N; i++) {
+        for (int j = 0; j < FourBoard::N; j++) {
+            if (!FourBoard::Playable(i, j)) { out += "xx"; continue; }
+            const Piece4& p = board.At(i, j);
+            if (!p.present) { out += ".."; continue; }
+            char c = ColorChar(p.color);
+            if (!p.alive && c >= 'a' && c <= 'z') c = (char) (c - 32);  // dead -> upper
+            out += c;
+            out += TypeChar(p.type);
+        }
+        if (i < FourBoard::N - 1) out += '/';
+    }
+    return out;
+}
+
+std::string FourGame::TestAt(int i, int j) const {
+    if (i < 0 || i >= FourBoard::N || j < 0 || j >= FourBoard::N) return "off";
+    if (!FourBoard::Playable(i, j)) return "off";
+    const Piece4& p = board.At(i, j);
+    if (!p.present) return "empty";
+    std::string s = ColorName(p.color);
+    s += ' ';
+    s += TypeName(p.type);
+    if (!p.alive) s += " dead";
+    return s;
+}
+
+std::string FourGame::TestLegal(int i, int j) const {
+    if (i < 0 || i >= FourBoard::N || j < 0 || j >= FourBoard::N) return "none";
+    if (!FourBoard::Playable(i, j) || !board.At(i, j).present) return "none";
+    std::vector<Move4> moves;
+    LegalMoves(i, j, moves);
+    if (moves.empty()) return "none";
+    std::string s;
+    for (size_t k = 0; k < moves.size(); k++) {
+        if (k) s += ' ';
+        s += compat::to_string(moves[k].i) + "," + compat::to_string(moves[k].j);
+    }
+    return s;
+}
+
+std::string FourGame::TestPoints() const {
+    std::string s;
+    for (int k = 0; k < 4; k++) {
+        if (k) s += ' ';
+        s += ColorName(players[k].color);
+        s += '=';
+        s += compat::to_string(players[k].points);
+        if (players[k].eliminated) s += "(elim)";
+    }
+    return s;
+}
+
+bool FourGame::TestMove(int fi, int fj, int ti, int tj) {
+    if (gameOver || promoPending) return false;
+    if (fi < 0 || fi >= FourBoard::N || fj < 0 || fj >= FourBoard::N) return false;
+    const Piece4& p = board.At(fi, fj);
+    if (!p.present || p.color != CurrentColor()) return false;
+    std::vector<Move4> moves;
+    LegalMoves(fi, fj, moves);
+    for (const Move4& m : moves) {
+        if (m.i == ti && m.j == tj) {
+            ApplyMove(fi, fj, m);        // handles capture / ep / castle / promo / turn advance
+            hasSelected = false; selMoves.clear();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool FourGame::TestPromote(int choice) {
+    if (!promoPending || choice < 0 || choice > 3) return false;
+    promoChoice = choice;
+    ConfirmPromo();                      // applies the chosen piece + advances the turn
+    return true;
+}
+
+#endif  // NETTEST

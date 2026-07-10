@@ -74,8 +74,51 @@ class PS3Client:
     def board(self):
         return self.send("board")
 
+    def turn(self):
+        return self.send("turn")
+
+    def at(self, square):
+        return self.send("at " + square)
+
+    def legal(self, square):
+        """Return the set of legal destination squares for the piece at `square`."""
+        reply = self.send("legal " + square)
+        if reply == "none" or reply.startswith("err"):
+            return set()
+        return set(reply.split())
+
+    def history(self):
+        reply = self.send("history")
+        return [] if reply == "(none)" else reply.split()
+
+    def points(self):
+        """Parse the 4PC points reply into {color: points}."""
+        reply = self.send("points")
+        out = {}
+        for tok in reply.split():
+            if "=" in tok:
+                k, v = tok.split("=", 1)
+                out[k] = int(v.split("(")[0])
+        return out
+
     def press(self, button):
         return self.send("press " + button)
+
+    # -- driving --------------------------------------------------------------
+    def newgame(self, mode="classic"):
+        return self.send("newgame " + mode)
+
+    def move(self, frm, to=None):
+        """move('e2','e4'), move('e2e4'), or 4PC numeric move('12,5','11,5')."""
+        cmd = "move " + frm if to is None else f"move {frm} {to}"
+        return self.send(cmd)
+
+    def promote(self, piece):
+        return self.send("promote " + piece)
+
+    def assert_ok(self, reply, ctx=""):
+        assert reply == "ok", f"expected ok, got {reply!r} {ctx}"
+        return reply
 
 
 if __name__ == "__main__":

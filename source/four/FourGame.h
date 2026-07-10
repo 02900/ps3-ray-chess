@@ -45,6 +45,17 @@ public:
     std::vector<unsigned char> Serialize() const;
     bool Deserialize(const unsigned char* data, unsigned size);
 
+#ifdef NETTEST
+    // E2E test harness hooks (numeric i,j coordinates, 0..13).
+    std::string TestState() const;                       // mode/turn/current/check/promo/gameover
+    std::string TestBoard() const;                       // 14 rows of 14 chars, joined by '/'
+    std::string TestAt(int i, int j) const;              // "<color> <type>" | "empty" | "off"
+    std::string TestLegal(int i, int j) const;           // legal targets "ti,tj ti,tj ..." | "none"
+    std::string TestPoints() const;                      // "red=.. blue=.. yellow=.. green=.."
+    bool TestMove(int fi, int fj, int ti, int tj);       // apply a legal move for the current colour
+    bool TestPromote(int choice);                        // 0..3 Q/R/B/N, then advance
+#endif
+
 private:
     FourBoard board;
     FourMode mode;
