@@ -41,10 +41,16 @@ PS3_IP=127.0.0.1 python3 tests/smoke.py
 ## 3. Run the suite
 
 ```bash
-pip install pytest
 cd tests
-PS3_IP=127.0.0.1 pytest -v        # or: pytest --ps3-ip 192.168.1.13
+python3 -m venv .venv          # isolated env (Homebrew Python is externally managed)
+source .venv/bin/activate
+pip install pytest
+PS3_IP=127.0.0.1 pytest -v     # or: pytest --ps3-ip 192.168.1.13
 ```
+
+> Use a venv (or `python3 -m pytest`), not a bare system `pytest`: on macOS the
+> system `pip` is externally managed (PEP 668) and a bare `pytest` may even resolve
+> to Python 2, which chokes on the suite's f-strings. `deactivate` leaves the venv.
 
 Tests share one connection and each starts from a fresh game (`classic`/`ffa`/`teams`
 fixtures), so they're order-independent. If the game isn't reachable the whole suite
