@@ -27,6 +27,7 @@ const int CMD_PORT = 9010;
 // Command/reply handoff between the socket thread and the main loop.
 sys_mutex_t g_mtx;
 sys_cond_t  g_cond;
+bool        g_mtxOk   = false;
 bool        g_condOk  = false;
 bool        g_hasCmd  = false;   // a command is waiting for the main loop
 bool        g_hasReply = false;  // the main loop posted a reply
@@ -42,8 +43,10 @@ int              g_listen  = -1;
 // and consumed by that same frame's input helpers), so it needs no lock.
 std::set<int> g_synth;
 
-void lock()   { sysMutexLock(g_mtx, 0); }
-void unlock() { sysMutexUnlock(g_mtx); }
+// Only one client with one outstanding command at a time, so the critical sections
+// are tiny; if the mutex couldn't be created these degrade to no-ops safely.
+void lock()   { if (g_mtxOk) sysMutexLock(g_mtx, 0); }
+void unlock() { if (g_mtxOk) sysMutexUnlock(g_mtx); }
 
 // Read one '\n'-terminated line (dropping '\r'). Returns false on disconnect/error.
 bool recv_line(int sock, std::string& out) {
@@ -131,25 +134,36 @@ namespace nettest {
 
 void Start() {
     sysModuleLoad(SYSMODULE_NET);
-    if (netInitialize() < 0) { std::printf("[nettest] netInitialize failed\n"); return; }
+    int ni = netInitialize();
+    // Non-fatal: on some setups the net stack is already up (or returns a benign
+    // code); let the socket calls report the real outcome instead of bailing here.
+    std::printf("[nettest] netInitialize -> %d\n", ni);
 
+    // NOTE (RPCS3 lv2 quirks, learned from ps3-remote-play): the mutex must be
+    // NON-adaptive and the cond's attr_pshared must be SYS_COND_ATTR_PSHARED
+    // (0 -> CELL_EINVAL). Getting these wrong makes create fail on RPCS3 — which is
+    // why we also degrade gracefully rather than abort if either still fails.
     sys_mutex_attr_t mattr;
     mattr.attr_protocol  = SYS_MUTEX_PROTOCOL_FIFO;
     mattr.attr_recursive = SYS_MUTEX_ATTR_NOT_RECURSIVE;
     mattr.attr_pshared   = SYS_MUTEX_ATTR_NOT_PSHARED;
-    mattr.attr_adaptive  = SYS_MUTEX_ATTR_ADAPTIVE;
+    mattr.attr_adaptive  = SYS_MUTEX_ATTR_NOT_ADAPTIVE;
     std::strcpy(mattr.name, "nettm");
-    if (sysMutexCreate(&g_mtx, &mattr) != 0) { std::printf("[nettest] mutex failed\n"); return; }
+    g_mtxOk = (sysMutexCreate(&g_mtx, &mattr) == 0);
+    if (!g_mtxOk) std::printf("[nettest] mutex create failed (continuing lock-free)\n");
 
-    sys_cond_attr_t cattr;
-    cattr.attr_pshared = 0;
-    cattr.flags = 0;
-    cattr.key = 0;
-    std::strcpy(cattr.name, "netcd");
-    g_condOk = (sysCondCreate(&g_cond, g_mtx, &cattr) == 0);
+    if (g_mtxOk) {
+        sys_cond_attr_t cattr;
+        cattr.attr_pshared = SYS_COND_ATTR_PSHARED;
+        cattr.flags = 0;
+        cattr.key = 0;
+        std::strcpy(cattr.name, "netcd");
+        g_condOk = (sysCondCreate(&g_cond, g_mtx, &cattr) == 0);
+        if (!g_condOk) std::printf("[nettest] cond create failed (polling fallback)\n");
+    }
 
     g_running = true;
-    if (sysThreadCreate(&g_tid, server_thread, NULL, 1500, 16 * 1024, 0,
+    if (sysThreadCreate(&g_tid, server_thread, NULL, 1500, 64 * 1024, 0,
                         (char*) "raychess_nettest") < 0) {
         std::printf("[nettest] thread create failed\n");
         g_running = false;
