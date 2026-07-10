@@ -158,11 +158,15 @@ ps3-ray-chess/
   blob format, auto-detected on load). The classic game is untouched.
 - **e2e test harness** *(done)*: an **opt-in** (`NETTEST`) TCP command server (`source/nettest/`) lets
   a PC drive the game over the network and assert its behaviour automatically instead of checking each
-  rule by hand on the console. A line protocol (`newgame` / `move` / `promote` / `press` and queries
-  `state` / `board` / `legal` / `at` / `history` / `points`) is served on a background thread and
-  applied on the main loop; a **Python + pytest** suite in `tests/` covers classic legality, check /
-  checkmate, castling, en passant, promotion, 4PC turn order, and menu navigation. Build it with
-  `./scripts/build-test.sh` (the shipped `build.sh` PKG opens no port); see
+  rule by hand on the console. A line protocol is served on a background thread and applied on the main
+  loop — driving (`newgame` / `move` / `promote` / `press`), **position setup** for scenarios
+  (`setup <fen>` classic, `setup4` for 4PC, `setclock` for the Fischer clock) and queries (`state` /
+  `board` / `legal` / `at` / `history` / `points` / `result`). A **Python + pytest** suite in `tests/`
+  (45 tests) covers classic legality, captures, check / checkmate (Fool's, Scholar's, back-rank,
+  ladder) / **stalemate**, castling, en passant, promotion, **clock flag-fall**, and — for 4PC — turn
+  order, **capture points**, **checkmate/stalemate elimination + scoring**, **multi-check bonuses**,
+  and **Teams 2v2 win/draw**, plus synthetic-input menu navigation. Build it with
+  `./scripts/build-test.sh` (which cleans first; the shipped `build.sh` PKG opens no port); see
   [`tests/README.md`](tests/README.md).
 
 ## Credits & license
