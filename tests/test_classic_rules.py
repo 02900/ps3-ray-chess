@@ -88,3 +88,17 @@ def test_history_tracks_san(classic):
     classic.move("g1", "f3")
     hist = classic.history()
     assert hist[:3] == ["e4", "e5", "Nf3"]
+
+
+def test_repetition_not_auto_drawn(classic):
+    # ray-chess's engine has no threefold-repetition rule; shuffling the knights back
+    # and forth must NOT end the game (documents current behaviour).
+    for _ in range(3):
+        classic.move("g1", "f3")
+        classic.move("g8", "f6")
+        classic.move("f3", "g1")
+        classic.move("f6", "g8")
+    st = classic.state()
+    assert st["gameover"] == "0"
+    assert st["state"] == "running"
+    assert classic.board() == START_FEN   # back to the start, still playing

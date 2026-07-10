@@ -116,6 +116,15 @@ class PS3Client:
     def promote(self, piece):
         return self.send("promote " + piece)
 
+    def setup(self, placement, active="w"):
+        """Classic: load a FEN placement (rank 8 first) + active colour (w/b)."""
+        return self.send(f"setup {placement} {active}")
+
+    def setup4(self, turn, *specs):
+        """4PC: place pieces. turn = red/blue/yellow/green; each spec = '<c><t>@i,j'
+        with c in r/b/y/g and t in p/r/n/b/q/k, e.g. setup4('red', 'rq@1,7', 'bk@0,7')."""
+        return self.send("setup4 " + turn + " " + " ".join(specs))
+
     def assert_ok(self, reply, ctx=""):
         assert reply == "ok", f"expected ok, got {reply!r} {ctx}"
         return reply

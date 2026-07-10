@@ -72,6 +72,8 @@ is skipped with a clear message.
 | `move <from> <to>` | `ok` / `err …` (`e2 e4`, `e2e4`, or 4PC `12,5 11,5`) |
 | `promote q\|r\|b\|n` | `ok` / `err …` |
 | `press <btn>` | `ok` (`cross circle triangle square up down left right start select l1 r1`) |
+| `setup <fen> [w\|b]` | `ok` — classic: load a FEN placement (+ active colour) to test a position |
+| `setup4 <turn> <c><t>@i,j …` | `ok` — 4PC: place pieces (`c`∈r/b/y/g, `t`∈p/r/n/b/q/k) for scenarios |
 
 ## Notes
 

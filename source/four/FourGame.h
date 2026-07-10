@@ -54,6 +54,9 @@ public:
     std::string TestPoints() const;                      // "red=.. blue=.. yellow=.. green=.."
     bool TestMove(int fi, int fj, int ti, int tj);       // apply a legal move for the current colour
     bool TestPromote(int choice);                        // 0..3 Q/R/B/N, then advance
+    void TestReset();                                    // empty board, all players alive, 0 points
+    bool TestPlace(int i, int j, PColor c, PIECE_TYPE t);// place one live piece (hasMoved=true)
+    bool TestSetTurn(PColor c);                          // set the current player by colour
 #endif
 
 private:

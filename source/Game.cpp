@@ -1475,6 +1475,35 @@ int PromoChoiceOf(const std::string& q) {
     return -1;
 }
 
+// Piece letter (p/r/n/b/q/k, any case) -> PIECE_TYPE, or -1.
+int TypeFromChar(char c) {
+    if (c >= 'A' && c <= 'Z') c = (char) (c + 32);
+    switch (c) {
+        case 'p': return PEON;   case 'r': return ROOK;  case 'n': return KNIGHT;
+        case 'b': return BISHOP; case 'q': return QUEEN; case 'k': return KING;
+    }
+    return -1;
+}
+
+// 4PC colour char (r/b/y/g) -> PColor; ok=false on a bad char.
+PColor ColorFromChar(char c, bool& ok) {
+    ok = true;
+    switch (c) {
+        case 'r': return P_RED;  case 'b': return P_BLUE;
+        case 'y': return P_YELLOW; case 'g': return P_GREEN;
+    }
+    ok = false; return P_RED;
+}
+
+// 4PC colour word (red/blue/yellow/green) -> PColor; false on a bad word.
+bool ColorFromWord(const std::string& w, PColor& out) {
+    if (w == "red")    { out = P_RED;    return true; }
+    if (w == "blue")   { out = P_BLUE;   return true; }
+    if (w == "yellow") { out = P_YELLOW; return true; }
+    if (w == "green")  { out = P_GREEN;  return true; }
+    return false;
+}
+
 }  // namespace
 
 // One-line summary of the live state, e.g.
@@ -1648,9 +1677,71 @@ std::string Game::HandleTestCommand(const std::string& cmd) {
         return "ok";
     }
 
+    // --- position setup (test scenarios) ------------------------------------
+    if (op == "setup") {
+        // Classic: setup <placement> [w|b]. Placement is FEN field 1 (rank 8 first).
+        // Placed pieces are marked as having moved (no castling implied).
+        if (t.size() < 2) return "err setup_needs_placement";
+        gameMode = MODE_CLASSIC; four.reset();
+        board.Clear();
+        int i = 0, j = 0;
+        for (char c : t[1]) {
+            if (c == '/') { i++; j = 0; continue; }
+            if (c >= '1' && c <= '8') { j += c - '0'; continue; }
+            int ty = TypeFromChar(c);
+            if (ty < 0) { board.Clear(); return std::string("err bad_fen_char ") + c; }
+            PIECE_COLOR col = (c >= 'A' && c <= 'Z') ? C_WHITE : C_BLACK;
+            if (i < 8 && j < 8) {
+                Piece* p = Piece::CreatePieceByType((PIECE_TYPE) ty, Position{i, j}, col);
+                p->SetHasMoved(true);
+                board.Add(p);
+            }
+            j++;
+        }
+        turn = (t.size() >= 3 && t[2] == "b") ? C_BLACK : C_WHITE;
+        screen = SCR_GAME; hasGame = true;
+        selectedPiece = nullptr;
+        state = S_RUNNING;
+        round = 1;
+        flipped = false;
+        ApplyTimeControl();
+        CalculateAllPossibleMovements();
+        CheckForEndOfGame();               // detect an immediate mate / stalemate
+        pendingHasMove = false; pendingSan.clear(); pendingCapturedType = -1;
+        history.clear(); historyIndex = -1;
+        CaptureSnapshot();
+        return "ok";
+    }
+
+    if (op == "setup4") {
+        // 4PC: setup4 <turn> <spec>...  spec = <colorChar><typeChar>@<i>,<j>
+        // e.g. setup4 red rq@1,7 rr@13,7 bk@0,7 yk@6,0 gk@6,13
+        if (!is4) return "err setup4_needs_4p_game";   // run `newgame ffa` first
+        if (t.size() < 2) return "err setup4_needs_turn";
+        PColor turnc;
+        if (!ColorFromWord(t[1], turnc)) return "err bad_turn_colour " + t[1];
+        four->TestReset();
+        for (size_t k = 2; k < t.size(); k++) {
+            const std::string& s = t[k];
+            size_t at = s.find('@');
+            if (at != 2) return "err bad_spec " + s;   // "<c><t>@..."
+            bool ok;
+            PColor c = ColorFromChar(s[0], ok);
+            int ty = TypeFromChar(s[1]);
+            Position p;
+            if (!ok || ty < 0 || !ParseNum(s.substr(at + 1), p))
+                return "err bad_spec " + s;
+            if (!four->TestPlace(p.i, p.j, c, (PIECE_TYPE) ty))
+                return "err unplayable " + s;
+        }
+        four->TestSetTurn(turnc);
+        return "ok";
+    }
+
     if (op == "help")
         return "queries: ping state board turn at<sq> legal<sq> history points | "
-               "driving: press<btn> newgame<classic|ffa|teams> move<from><to> promote<q|r|b|n>";
+               "driving: press<btn> newgame<classic|ffa|teams> move<from><to> promote<q|r|b|n> | "
+               "setup <fen> [w|b] | setup4 <turn> <c><t>@i,j ...";
 
     return "err unknown " + op;
 }

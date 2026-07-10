@@ -847,4 +847,27 @@ bool FourGame::TestPromote(int choice) {
     return true;
 }
 
+void FourGame::TestReset() {
+    for (int i = 0; i < FourBoard::N; i++)
+        for (int j = 0; j < FourBoard::N; j++)
+            board.At(i, j) = { false, P_NONE, PEON, false, false };
+    for (int k = 0; k < 4; k++) { players[k].eliminated = false; players[k].points = 0; }
+    current = 0;
+    gameOver = false; resultMsg.clear();
+    hasSelected = false; selMoves.clear();
+    promoPending = false; epValid = false;
+}
+
+bool FourGame::TestPlace(int i, int j, PColor c, PIECE_TYPE t) {
+    if (!FourBoard::Playable(i, j)) return false;
+    board.At(i, j) = { true, c, t, true, true };   // hasMoved=true so setups don't imply castling
+    return true;
+}
+
+bool FourGame::TestSetTurn(PColor c) {
+    for (int k = 0; k < 4; k++)
+        if (players[k].color == c) { current = k; return true; }
+    return false;
+}
+
 #endif  // NETTEST
