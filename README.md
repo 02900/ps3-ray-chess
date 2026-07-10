@@ -156,6 +156,14 @@ ps3-ray-chess/
   values, +20 mate/stalemate, multi-check bonuses, winner by points, final standings), a 4-player HUD
   (points / turn / check / eliminated), and **save/load** via the same XMB Saved Data Utility (its own
   blob format, auto-detected on load). The classic game is untouched.
+- **e2e test harness** *(done)*: an **opt-in** (`NETTEST`) TCP command server (`source/nettest/`) lets
+  a PC drive the game over the network and assert its behaviour automatically instead of checking each
+  rule by hand on the console. A line protocol (`newgame` / `move` / `promote` / `press` and queries
+  `state` / `board` / `legal` / `at` / `history` / `points`) is served on a background thread and
+  applied on the main loop; a **Python + pytest** suite in `tests/` covers classic legality, check /
+  checkmate, castling, en passant, promotion, 4PC turn order, and menu navigation. Build it with
+  `./scripts/build-test.sh` (the shipped `build.sh` PKG opens no port); see
+  [`tests/README.md`](tests/README.md).
 
 ## Credits & license
 
